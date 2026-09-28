@@ -1,0 +1,17 @@
+# SwiftPM / build artifacts
+.build/
+.swiftpm/
+build/
+
+# macOS
+.DS_Store
+
+# Local AI agent session data
+.pi-subagents/
+.workbuddy/
+
+# Logs
+*.log
+
+# UX iteration CUA captures
+.scratch/ux-iterate/shots/
