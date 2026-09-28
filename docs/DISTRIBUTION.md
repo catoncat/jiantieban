@@ -1,6 +1,6 @@
 # jiantieban 分发
 
-现状：本地构建、自签签名、占位图标可用；Developer ID、公证、发布未做，暂不发布。
+现状：源码已在 [catoncat/jiantieban](https://github.com/catoncat/jiantieban) 开源（MIT），用户自行 `make app`；本地构建、自签签名、占位图标可用；Developer ID、公证、二进制发布未做。
 
 ## 现有工具
 
@@ -13,8 +13,8 @@
 
 ### 1. 仓库
 
-- [ ] 从全新仓库发布：把当前代码压成一个初始提交，不带开发期历史（`git archive HEAD` 导出只含已跟踪文件；被全局 gitignore 的 `.scratch/ux-iterate/` 等不会带过去，`.scratch/` 其余内容按需取舍）
-- [ ] 确认仓库里没有个人路径、真实密钥名或引用
+- [x] 从全新仓库发布：开发期历史压成一个初始提交，不公开
+- [ ] 每次推送前确认没有个人路径、真实密钥名或引用
 - bundle id 保持 `rs.jiantieban`（自写剪贴板标记 `rs.jiantieban.self` 同理）：改了会丢已有用户的设置和辅助功能授权
 
 ### 2. 图标

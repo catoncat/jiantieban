@@ -16,12 +16,13 @@
 | 设置 | ✅ | 通用 / 快捷键 / 历史 / 贴回 / 隐私 / 外观 / 高级 七页；快捷键录键真机交互待验 🧪 |
 | 首启 / 菜单栏 | ✅ | 欢迎页 + 启用一键贴回页；菜单栏显示当前贴回模式 |
 | 构建 | ✅ | CLT + SPM + Makefile；自签证书签名；占位图标；`make test` / `make bench` / `make measure` |
+| 开源 | ✅ | 源码在 [catoncat/jiantieban](https://github.com/catoncat/jiantieban)（MIT）；jt 在 [catoncat/jt](https://github.com/catoncat/jt) |
 
 验收步骤见 [ACCEPTANCE.md](ACCEPTANCE.md)，性能见 [PERFORMANCE.md](PERFORMANCE.md)。
 
 ## 2. 待做
 
-- ⬜ Developer ID 签名、公证、首次发布（[DISTRIBUTION.md](DISTRIBUTION.md)）
+- ⬜ Developer ID 签名、公证、首个二进制发布（[DISTRIBUTION.md](DISTRIBUTION.md)）
 - ⬜ 正式 App 图标
 - ⬜ 并发边界回归测试（`.scratch/code-quality/issues/06`）
 - ⬜ 性能补测：面板打开时快速导航、连续复制 1 小时内存、debug `leaks` 排除系统框架
