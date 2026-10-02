@@ -105,6 +105,9 @@ final class AppSettings: ObservableObject {
     @Published var onboardingCompleted: Bool {
         didSet { defaults.set(onboardingCompleted, forKey: "firstRunDone") }
     }
+    @Published var blurCloseEnabled: Bool {
+        didSet { defaults.set(blurCloseEnabled, forKey: "blurCloseEnabled") }
+    }
     @Published var blurCloseDelay: Double {
         didSet { defaults.set(blurCloseDelay, forKey: "blurCloseDelay") }
     }
@@ -135,6 +138,7 @@ final class AppSettings: ObservableObject {
         self.keymapOverrides = (d.dictionary(forKey: "keymapOverrides") as? [String: String]) ?? [:]
         self.ocrLanguages = d.stringArray("ocrLanguages") ?? Self.defaultOCRLanguages
         self.onboardingCompleted = d.bool("firstRunDone", fallback: false)
+        self.blurCloseEnabled = d.bool("blurCloseEnabled", fallback: true)
         self.blurCloseDelay = d.double("blurCloseDelay", fallback: 0.35)
         self.launchAtLogin = d.bool("launchAtLogin", fallback: false)
     }
