@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let (store, pipeline, secrets) = try makeEngine()
             self.store = store
             self.pipeline = pipeline
+            // 启动时也执行保留策略，避免剪贴板静止时过期数据一直留在本地。
+            self.applyHistory()
             self.pipeline.policy = IngestPolicy(
                 privacyMode: settings.privacyMode,
                 autoExcludeSecrets: settings.autoExcludeSecrets
@@ -146,10 +148,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyHistory() {
-        store?.config.retentionSeconds = settings.retentionSeconds
-        store?.config.hardLimit = settings.hardLimit
-        store?.config.maxSaveLength = settings.maxSaveLength
-        store?.config.favoritesPermanent = settings.favoritesPermanent
+        guard let store else { return }
+        var config = store.config
+        config.retentionSeconds = settings.retentionSeconds
+        config.hardLimit = settings.hardLimit
+        config.maxSaveLength = settings.maxSaveLength
+        config.favoritesPermanent = settings.favoritesPermanent
+        do {
+            let result = try store.applyConfigAndPrune(config)
+            ImageStore.removeFiles(result.removedImageFiles)
+        } catch {
+            NSLog("[jtb] history prune failed: \(error)")
+        }
     }
 
     private func applyOCRLanguages() {

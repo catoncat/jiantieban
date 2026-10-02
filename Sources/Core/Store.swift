@@ -592,6 +592,13 @@ public final class ClipStore {
 
     // MARK: - 保留策略（24h + 600 上限，收藏豁免）
 
+    /// 更新历史策略后立即清理现有数据；调用方负责删除返回的图片文件。
+    @discardableResult
+    public func applyConfigAndPrune(_ config: StoreConfig, now: Date = Date()) throws -> PruneResult {
+        self.config = config
+        return try prune(now: now)
+    }
+
     @discardableResult
     public func prune(now: Date = Date()) throws -> PruneResult {
         var result = PruneResult()
