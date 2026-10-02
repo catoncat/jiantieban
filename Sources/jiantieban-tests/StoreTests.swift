@@ -10,6 +10,8 @@ enum StoreTests {
         [
             TestCase("insert and list text", testInsertAndList),
             TestCase("text dedupe refreshes recency", testTextDedupe),
+            TestCase("SQLite text reads preserve embedded NUL and distinguish NULL from empty", testSQLiteTextReads),
+            TestCase("剪贴板记录保留 NUL 前后的 UTF-8 文本且不会误去重", testEmbeddedNULText),
             TestCase("image dedupe by hash", testImageDedupe),
             TestCase("text truncation at 12000", testTruncation),
             TestCase("favorite survives prune by age", testFavoriteSurvivesPrune),
@@ -52,6 +54,34 @@ enum StoreTests {
         let page = try store.search(SearchQuery())
         try expectEqual(page.total, 2)
         try expectEqual(page.items.first?.content, "aaa", "duplicate should move to front")
+    }
+
+    static func testSQLiteTextReads() throws {
+        let db = try SQLiteDB(path: ":memory:")
+        // 绕过 bind，独立覆盖两个读取方法，避免写入截断掩盖读取截断。
+        let stmt = try db.prepare("SELECT CAST(X'61006200' AS TEXT), NULL, ''")
+        try expect(try stmt.step())
+        try expectEqual(stmt.columnText(0), "a\0b\0")
+        try expectEqual(stmt.columnTextOrNil(0), "a\0b\0")
+        try expectEqual(stmt.columnTextOrNil(1), nil)
+        try expectEqual(stmt.columnTextOrNil(2), "")
+        try expectEqual(stmt.columnText(1), "")
+    }
+
+    static func testEmbeddedNULText() throws {
+        let store = try makeStore()
+        let values = ["前缀", "前缀\0后缀🧪", "前缀\0不同后缀", "\0开头", "结尾\0", ""]
+        for value in values {
+            let (item, inserted) = try store.upsertText(value)
+            try expect(inserted, "different text must not dedupe at NUL")
+            try expectEqual(item.content, value)
+            try expectEqual(try store.item(id: item.id)?.content, value)
+            let (duplicate, reinserted) = try store.upsertText(value)
+            try expect(!reinserted)
+            try expectEqual(duplicate.id, item.id)
+            try expectEqual(duplicate.content, value)
+        }
+        try expectEqual(try store.count(), values.count)
     }
 
     static func testImageDedupe() throws {

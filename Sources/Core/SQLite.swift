@@ -71,7 +71,12 @@ public final class SQLiteStmt {
     deinit { sqlite3_finalize(stmt) }
 
     public func bind(_ index: Int32, _ value: String) throws {
-        try db.checkOK(sqlite3_bind_text(stmt, index, value, -1, SQLITE_TRANSIENT), context: "bind text")
+        // 剪贴板文本可以包含 NUL；-1 会让 SQLite 在第一个 NUL 处截断。
+        // 长度必须按 UTF-8 字节计算，而不是 Swift 的字符数。
+        let rc = value.utf8CString.withUnsafeBufferPointer { bytes in
+            sqlite3_bind_text(stmt, index, bytes.baseAddress, Int32(bytes.count - 1), SQLITE_TRANSIENT)
+        }
+        try db.checkOK(rc, context: "bind text")
     }
 
     public func bind(_ index: Int32, _ value: String?) throws {
@@ -101,12 +106,13 @@ public final class SQLiteStmt {
 
     public func columnText(_ index: Int32) -> String {
         guard let ptr = sqlite3_column_text(stmt, index) else { return "" }
-        return String(cString: ptr)
+        let count = Int(sqlite3_column_bytes(stmt, index))
+        return String(decoding: UnsafeBufferPointer(start: ptr, count: count), as: UTF8.self)
     }
 
     public func columnTextOrNil(_ index: Int32) -> String? {
-        guard sqlite3_column_type(stmt, index) != SQLITE_NULL, let ptr = sqlite3_column_text(stmt, index) else { return nil }
-        return String(cString: ptr)
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return columnText(index)
     }
 
     public func columnInt64(_ index: Int32) -> Int64 { sqlite3_column_int64(stmt, index) }
