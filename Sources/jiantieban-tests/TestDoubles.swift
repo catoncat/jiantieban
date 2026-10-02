@@ -12,8 +12,10 @@ final class FakePermission: PastebackPermissionChecking {
 @MainActor
 final class RecordingClipboard: PastebackClipboardWriting {
     var contents: [PastebackContent] = []
+    var changeCount = 0
     func write(_ content: PastebackContent) -> Bool {
         contents.append(content)
+        changeCount += 1
         return true
     }
 }

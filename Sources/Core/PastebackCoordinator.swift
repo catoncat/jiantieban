@@ -41,6 +41,8 @@ public protocol PastebackPermissionChecking: AnyObject {
 
 @MainActor
 public protocol PastebackClipboardWriting: AnyObject {
+    /// Changes whenever clipboard ownership/content changes, including external copies.
+    var changeCount: Int { get }
     func write(_ content: PastebackContent) -> Bool
 }
 
@@ -98,7 +100,10 @@ public final class PastebackCoordinator {
         guard intent == .automaticPaste else {
             return .copied
         }
-        scheduler.schedule { [sender] in
+        let writtenChangeCount = clipboard.changeCount
+        scheduler.schedule { [clipboard, sender] in
+            // A later copy must not be pasted or attributed to this older request.
+            guard clipboard.changeCount == writtenChangeCount else { return }
             sender.sendCommandV()
             onPaste?()
         }
