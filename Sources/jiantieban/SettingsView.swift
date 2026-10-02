@@ -48,7 +48,7 @@ private struct GeneralPane: View {
                 Toggle("登录时启动", isOn: $settings.launchAtLogin)
             }
             Section("面板行为") {
-                Toggle("失焦自动关闭", isOn: .constant(true))
+                Toggle("失焦自动关闭", isOn: $settings.blurCloseEnabled)
                 HStack {
                     Text("关闭延迟")
                     Slider(value: $settings.blurCloseDelay, in: 0...2, step: 0.05)

@@ -1145,9 +1145,12 @@ extension PanelController: NSTextFieldDelegate {
 extension PanelController: NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         NSLog("[jtb] resignKey isVisible=\(isVisible)")
-        guard isVisible, blurCloseEnabled else { return }
+        guard isVisible, blurCloseEnabled, AppSettings.shared.blurCloseEnabled else { return }
         // 用户主动点了别的 App，不要在延迟关闭后又激活唤起面板前的 App。
-        let task = DispatchWorkItem { [weak self] in self?.hide(restoringPreviousApp: false) }
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, self.blurCloseEnabled, AppSettings.shared.blurCloseEnabled else { return }
+            self.hide(restoringPreviousApp: false)
+        }
         blurCloseTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + AppSettings.shared.blurCloseDelay, execute: task)
     }
