@@ -14,6 +14,8 @@ public final class SystemPastebackClipboard: PastebackClipboardWriting {
         self.fileManager = fileManager
     }
 
+    public var changeCount: Int { pasteboard.changeCount }
+
     public func write(_ content: PastebackContent) -> Bool {
         guard let object = preparedObject(for: content) else { return false }
         let original = snapshot()

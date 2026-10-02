@@ -112,6 +112,7 @@ enum PastebackCoordinatorTests {
         },
         TestCase("写入失败不会发送按键") {
             final class FailingClipboard: PastebackClipboardWriting {
+                var changeCount: Int { 0 }
                 func write(_ content: PastebackContent) -> Bool { false }
             }
             let sender = CountingSender()
@@ -128,6 +129,76 @@ enum PastebackCoordinatorTests {
             try expectEqual(result, .contentUnavailable)
             try expectEqual(scheduler.scheduleCount, 0)
             try expectEqual(sender.sendCount, 0)
+        },
+
+        TestCase("延迟期间外部复制取消旧贴回及已贴回回调") {
+            let (coordinator, clipboard, sender, scheduler) = make(trusted: true)
+            let callbacks = CountingSender()
+            coordinator.execute(.text("old"), intent: .automaticPaste) {
+                callbacks.sendCommandV()
+            }
+
+            clipboard.changeCount += 1 // Another app replaces the clipboard.
+            scheduler.run()
+
+            try expectEqual(sender.sendCount, 0)
+            try expectEqual(callbacks.sendCount, 0)
+        },
+        TestCase("剪贴板未变化时发送按键并执行已贴回回调") {
+            let (coordinator, _, sender, scheduler) = make(trusted: true)
+            let callbacks = CountingSender()
+            coordinator.execute(.text("same"), intent: .automaticPaste) {
+                callbacks.sendCommandV()
+            }
+
+            scheduler.run()
+
+            try expectEqual(sender.sendCount, 1)
+            try expectEqual(callbacks.sendCount, 1)
+        },
+        TestCase("较新的仅复制操作使旧贴回失效") {
+            let (coordinator, clipboard, sender, scheduler) = make(trusted: true)
+            let callbacks = CountingSender()
+            coordinator.execute(.text("old"), intent: .automaticPaste) {
+                callbacks.sendCommandV()
+            }
+            try expectEqual(coordinator.execute(.text("new"), intent: .copyOnly), .copied)
+
+            scheduler.run()
+
+            try expectEqual(clipboard.contents.last, .text("new"))
+            try expectEqual(sender.sendCount, 0)
+            try expectEqual(callbacks.sendCount, 0)
+        },
+        TestCase("连续自动贴回只发送最新请求并保留正确的剪贴板记录") {
+            final class QueuedScheduler: PastebackScheduling {
+                var actions: [@MainActor @Sendable () -> Void] = []
+                func schedule(_ action: @escaping @MainActor @Sendable () -> Void) {
+                    actions.append(action)
+                }
+            }
+            let clipboard = RecordingClipboard()
+            let sender = CountingSender()
+            let scheduler = QueuedScheduler()
+            let oldCallbacks = CountingSender()
+            let newCallbacks = CountingSender()
+            let coordinator = PastebackCoordinator(
+                permission: FakePermission(true), clipboard: clipboard,
+                sender: sender, scheduler: scheduler
+            )
+            coordinator.execute(.text("old"), intent: .automaticPaste) {
+                oldCallbacks.sendCommandV()
+            }
+            coordinator.execute(.text("new"), intent: .automaticPaste) {
+                newCallbacks.sendCommandV()
+            }
+
+            try expectEqual(scheduler.actions.count, 2)
+            for action in scheduler.actions { action() }
+
+            try expectEqual(sender.sendCount, 1)
+            try expectEqual(oldCallbacks.sendCount, 0)
+            try expectEqual(newCallbacks.sendCount, 1)
         },
     ]
 }
