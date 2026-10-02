@@ -17,6 +17,7 @@ enum StoreTests {
             TestCase("favorite survives prune by age", testFavoriteSurvivesPrune),
             TestCase("从 App 贴回过的记录不受时长和条数限制", testPastedSurvivesPrune),
             TestCase("同内容重复复制只留最新来源，异步旧结果不得覆盖", testSourceFollowsLatestCopy),
+            TestCase("applying a history config prunes existing rows immediately", testApplyConfigAndPrune),
             TestCase("favorite is pruned by age when favoritesPermanent is false", testFavoritePrunedByAgeWhenNotPermanent),
             TestCase("favorite is included in hard limit when favoritesPermanent is false", testFavoriteIncludedInHardLimitWhenNotPermanent),
             TestCase("prune enforces hard limit", testHardLimit),
@@ -163,6 +164,38 @@ enum StoreTests {
         _ = try store.upsertText("same words", at: third)
         try expect(try store.item(id: item.id)?.browserSource == nil, "下次从非浏览器复制要清空来源")
         try expectEqual(try store.search(SearchQuery(parsing: "docs-new")).total, 0)
+    }
+
+    static func testApplyConfigAndPrune() throws {
+        let store = try makeStore()
+        let now = Date(timeIntervalSince1970: 200_000)
+        let old = Date(timeIntervalSince1970: 1_000)
+
+        let favoriteImage = try store.upsertImage(
+            imagePath: "/tmp/expired.png", thumbPath: "/tmp/expired-small.png", hash: "expired", at: old
+        ).item
+        _ = try store.toggleFavorite(id: favoriteImage.id)
+        let pasted = try store.upsertText("pasted survives policy change", at: old).item
+        try store.markPasted(id: pasted.id)
+        let olderRecent = try store.upsertText(
+            "older recent", at: Date(timeIntervalSince1970: now.timeIntervalSince1970 - 120)
+        ).item
+        let newestRecent = try store.upsertText(
+            "newest recent", at: Date(timeIntervalSince1970: now.timeIntervalSince1970 - 60)
+        ).item
+
+        let stricterConfig = StoreConfig(
+            retentionSeconds: 3_600, hardLimit: 1, maxSaveLength: 12_000, favoritesPermanent: false
+        )
+        let result = try store.applyConfigAndPrune(stricterConfig, now: now)
+
+        try expectEqual(result.removedCount, 2, "expired favorite plus the row beyond the new hard limit")
+        try expectEqual(result.removedImageFiles.sorted(), ["/tmp/expired-small.png", "/tmp/expired.png"].sorted())
+        try expect(try store.item(id: favoriteImage.id) == nil, "expired favorites follow the updated policy")
+        try expect(try store.item(id: pasted.id)?.wasPasted == true, "pasted items remain exempt")
+        try expect(try store.item(id: olderRecent.id) == nil, "the updated hard limit applies immediately")
+        try expectEqual(try store.item(id: newestRecent.id)?.content, "newest recent")
+        try expectEqual(try store.count(), 2)
     }
 
     static func testFavoritePrunedByAgeWhenNotPermanent() throws {
