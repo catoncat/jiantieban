@@ -84,7 +84,7 @@
 ### CLI / Skill
 - [ ] `jiantieban help` 与实际命令一致；`secrets` / `annotate` / `resolve` / `unmark-secret` 打印去向并以退出码 2 退出
 - [ ] `jt resolve <引用> --exec sh -c 'test -n "$JT_SECRET" && echo ok'` 输出 ok，不输出真值；加 `--env NAME` 时注入的是 NAME
-- [ ] 按 `skills/jiantieban-secret/SKILL.md` 让 Agent 走一遍消费流程
+- [ ] 按 jt 仓库 `skills/jiantieban-secret/SKILL.md` 让 Agent 走一遍消费流程
 
 ### 没有 jt
 - [ ] 卸下 jt（或 `JT_BIN` 指向不存在的路径）后，剪贴板采集、搜索、贴回照常

@@ -37,7 +37,7 @@ open build/jiantieban.app
 
 ## Agent Skill
 
-`skills/jiantieban-secret/SKILL.md`：让 Agent 在见到 `jt://secret/` 引用时用 `jt resolve <引用> --exec <命令>` 消费真值（只注入子进程环境变量），并按你给出的名称用 `jt mv` 命名。把这个目录放进你所用 Agent 的 skills 目录即可。
+Skill 在 [jt 仓库](https://github.com/catoncat/jt) 的 `skills/jiantieban-secret/SKILL.md`：让 Agent 在见到 `jt://secret/` 引用时用 `jt resolve <引用> --exec <命令>` 消费真值（只注入子进程环境变量），并按你给出的名称用 `jt mv` 命名。把该目录放进你所用 Agent 的 skills 目录即可。
 
 ## 隐私
 

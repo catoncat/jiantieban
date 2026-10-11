@@ -47,7 +47,7 @@ jiantieban 是 macOS 原生剪贴板管理器：内存低、CPU 空闲为零、�
 
 - 密钥命令行统一走 jt：`jt ls`、`jt resolve <引用> --exec <命令>`（真值只进子进程环境变量 `JT_SECRET`，`--env NAME` 改名）、`jt mv`。
 - `jiantieban` CLI 只保留剪贴板相关命令和 `mark-secret`；旧的 `secrets` / `annotate` / `resolve` / `unmark-secret` 只打印去向，退出码 2。
-- Skill `skills/jiantieban-secret/SKILL.md`：见到 `jt://secret/` 时触发；只用 `--exec` 消费真值，不把真值写进对话或日志；只有用户给出或上下文明确指向时才命名，不自行编造。
+- Skill（在 jt 仓库 `skills/jiantieban-secret/SKILL.md`）：见到 `jt://secret/` 时触发；只用 `--exec` 消费真值，不把真值写进对话或日志；只有用户给出或上下文明确指向时才命名，不自行编造。
 
 ## 4. 非功能要求
 

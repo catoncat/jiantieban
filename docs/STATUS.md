@@ -12,7 +12,7 @@
 | 贴回 | ✅ | 一键贴回 / 仅复制两种模式，实时跟随辅助功能权限；图片可贴为图片或文件 |
 | 浏览器来源 | 🧪 | Chrome（Apple Events）/ Helium（辅助功能）普通窗口的标题和 URL；实际复制往返与 Chrome 授权待验 |
 | 密钥 | ✅ | 标记 + 命名建议 + ⌘Z 撤销；粘贴为密钥；密钥视图读 `jt ls --json`；引用记录跟随 jt；未同步提示；普通路径零 jt 调用；从不 `jt sync` |
-| CLI / Skill | ✅ | `jiantieban help` 列出的剪贴板命令 + `mark-secret`；旧密钥命令只给去向；`skills/jiantieban-secret` |
+| CLI / Skill | ✅ | `jiantieban help` 列出的剪贴板命令 + `mark-secret`；旧密钥命令只给去向；Skill 在 jt 仓库 |
 | 设置 | ✅ | 通用 / 快捷键 / 历史 / 贴回 / 隐私 / 外观 / 高级 七页；快捷键录键真机交互待验 🧪 |
 | 首启 / 菜单栏 | ✅ | 欢迎页 + 启用一键贴回页；菜单栏显示当前贴回模式 |
 | 构建 | ✅ | CLT + SPM + Makefile；自签证书签名；占位图标；`make test` / `make bench` / `make measure` |
@@ -43,6 +43,5 @@
 - jt 未安装 / 找不到时的检测与引导
 - GUI App 不继承 shell 的 PATH 和 jt 环境变量（`JT_HOME` 等），jt 路径怎么配
 - jt 若提供 `set`（替换值），App 是否接入
-- `jiantieban-secret` Skill 是否迁到 jt 仓库
 - 何时删掉 CLI 里旧密钥命令的去向提示
 - 对外介绍页文案（旧稿不准，已删）
