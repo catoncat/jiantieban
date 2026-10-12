@@ -15,8 +15,8 @@ macOS 原生剪贴板管理器：常驻内存几十 MB、空闲不占 CPU、毫�
 
 ## 要求
 
-- macOS 26 或更高
-- 从源码构建：Xcode 或 Command Line Tools（Swift 6.2）
+- macOS 15 或更高（Liquid Glass 需要 macOS 26）
+- 从源码构建：Xcode 或 Command Line Tools（Swift 6.1 或更高）
 
 ## 构建
 

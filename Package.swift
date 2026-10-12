@@ -1,9 +1,9 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.1
 import PackageDescription
 
 let package = Package(
     name: "jiantieban",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v15)],
     targets: [
         .target(
             name: "Core",

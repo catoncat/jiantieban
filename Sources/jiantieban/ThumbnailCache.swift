@@ -12,10 +12,10 @@ final class ThumbnailCache {
     private let cache = NSCache<NSString, NSImage>()
     /// 解码中的路径 → 等结果的回调。解码期间列表重载会换一个 cell 来要同一张图，
     /// 每个请求者都要收到结果，否则新 cell 一直是空白占位。
-    private var waiters: [String: [@Sendable (NSImage?) -> Void]] = [:]
+    private var waiters: [String: [@MainActor (NSImage?) -> Void]] = [:]
 
     /// 命中则立即返回；未命中返回 nil 并后台生成正方形预览，完成后主线程回调。
-    func preview(for path: String, completion: @escaping @Sendable (NSImage?) -> Void) -> NSImage? {
+    func preview(for path: String, completion: @escaping @MainActor (NSImage?) -> Void) -> NSImage? {
         if let cached = cache.object(forKey: path as NSString) { return cached }
         if waiters[path] != nil {
             waiters[path]?.append(completion)

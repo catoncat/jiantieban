@@ -123,47 +123,49 @@ final class PanelController: NSObject {
             solid.addSubview(root)
             return root
         }
-        if AppSettings.shared.appearanceStyle == "compatible" {
-            let vibrancy = NSVisualEffectView(frame: frame)
-            vibrancy.material = .popover
-            vibrancy.blendingMode = .behindWindow
-            vibrancy.state = .active
-            vibrancy.wantsLayer = true
-            vibrancy.layer?.cornerRadius = PanelMetrics.cornerRadius
-            vibrancy.layer?.cornerCurve = .continuous
-            vibrancy.layer?.masksToBounds = true
-            vibrancy.autoresizingMask = [.width, .height]
-            panel.contentView = vibrancy
-            let root = PanelChromeHost(frame: vibrancy.bounds)
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *), AppSettings.shared.appearanceStyle != "compatible" {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.cornerRadius = PanelMetrics.cornerRadius
+            glass.style = .regular
+            // 对照系统 Spotlight：浅色桌面上它明显更白；.regular 默认偏灰，浅色模式补一层白 tint，暗色不动
+            glass.tintColor = NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .clear : NSColor.white.withAlphaComponent(0.25)
+            }
+            if #available(macOS 27.0, *) {
+                glass.effectIsInteractive = true
+            }
+            glass.autoresizingMask = [.width, .height]
+            // 按玻璃同样的圆角裁掉它画在轮廓外的阴影：角上完全透明，系统阴影才贴着圆角走
+            let clip = NSView(frame: frame)
+            clip.wantsLayer = true
+            clip.layer?.cornerRadius = PanelMetrics.cornerRadius
+            clip.layer?.cornerCurve = .continuous
+            clip.layer?.masksToBounds = true
+            clip.autoresizingMask = [.width, .height]
+            clip.addSubview(glass)
+            panel.contentView = clip
+
+            let root = PanelChromeHost(frame: glass.bounds)
             root.autoresizingMask = [.width, .height]
-            vibrancy.addSubview(root)
+            glass.contentView = root
             return root
         }
+        #endif
 
-        let glass = NSGlassEffectView(frame: frame)
-        glass.cornerRadius = PanelMetrics.cornerRadius
-        glass.style = .regular
-        // 对照系统 Spotlight：浅色桌面上它明显更白；.regular 默认偏灰，浅色模式补一层白 tint，暗色不动
-        glass.tintColor = NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .clear : NSColor.white.withAlphaComponent(0.25)
-        }
-        if #available(macOS 27.0, *) {
-            glass.effectIsInteractive = true
-        }
-        glass.autoresizingMask = [.width, .height]
-        // 按玻璃同样的圆角裁掉它画在轮廓外的阴影：角上完全透明，系统阴影才贴着圆角走
-        let clip = NSView(frame: frame)
-        clip.wantsLayer = true
-        clip.layer?.cornerRadius = PanelMetrics.cornerRadius
-        clip.layer?.cornerCurve = .continuous
-        clip.layer?.masksToBounds = true
-        clip.autoresizingMask = [.width, .height]
-        clip.addSubview(glass)
-        panel.contentView = clip
-
-        let root = PanelChromeHost(frame: glass.bounds)
+        let vibrancy = NSVisualEffectView(frame: frame)
+        vibrancy.material = .popover
+        vibrancy.blendingMode = .behindWindow
+        vibrancy.state = .active
+        vibrancy.wantsLayer = true
+        vibrancy.layer?.cornerRadius = PanelMetrics.cornerRadius
+        vibrancy.layer?.cornerCurve = .continuous
+        vibrancy.layer?.masksToBounds = true
+        vibrancy.autoresizingMask = [.width, .height]
+        panel.contentView = vibrancy
+        let root = PanelChromeHost(frame: vibrancy.bounds)
         root.autoresizingMask = [.width, .height]
-        glass.contentView = root
+        vibrancy.addSubview(root)
         return root
     }
 

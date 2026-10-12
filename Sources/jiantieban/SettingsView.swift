@@ -242,11 +242,15 @@ private struct AppearancePane: View {
             Section("视觉风格") {
                 Picker("视觉风格", selection: $settings.appearanceStyle) {
                     Text("自动").tag("auto")
-                    Text("Liquid Glass").tag("glass")
+                    #if compiler(>=6.2)
+                    if #available(macOS 26.0, *) {
+                        Text("Liquid Glass").tag("glass")
+                    }
+                    #endif
                     Text("兼容").tag("compatible")
                 }
                 .pickerStyle(.segmented)
-                Text("兼容：用系统 vibrancy 材质代替 Liquid Glass，下次启动生效。")
+                Text("macOS 15 使用系统半透明材质；Liquid Glass 需要 macOS 26。下次启动生效。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
