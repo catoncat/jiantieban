@@ -874,7 +874,7 @@ final class PanelController: NSObject {
         run(.paste)
     }
 
-    /// 锁 / 眼睛 / 铅笔 / 密钥引用按钮自己处理点击，双击不得再走整行贴回。
+    /// 普通标签和图片也是 NSControl；只有按钮和可交互文本需要拦截整行贴回。
     private func clickLandedOnRowControl() -> Bool {
         guard let event = NSApp.currentEvent else { return false }
         let pointInTable = tableView.convert(event.locationInWindow, from: nil)
@@ -883,8 +883,15 @@ final class PanelController: NSObject {
               let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ClipCellView else {
             return false
         }
-        let pointInCell = cell.convert(pointInTable, from: tableView)
-        return cell.hitTest(pointInCell) is NSControl
+        guard let parent = cell.superview else { return false }
+        var hit = cell.hitTest(parent.convert(event.locationInWindow, from: nil))
+        while let view = hit, view !== cell {
+            if view is NSButton { return true }
+            if let field = view as? NSTextField, field.isEditable || field.isSelectable { return true }
+            if let text = view as? NSTextView, text.isEditable || text.isSelectable { return true }
+            hit = view.superview
+        }
+        return false
     }
 
     private func move(_ delta: Int) {
