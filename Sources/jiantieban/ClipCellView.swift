@@ -562,10 +562,8 @@ final class ClipCellView: NSTableCellView {
             return
         }
         if let img = ThumbnailCache.shared.preview(for: path, completion: { [weak self] decoded in
-            MainActor.assumeIsolated {
-                guard let self, self.currentThumbPath == path else { return }
-                self.showThumb(decoded)
-            }
+            guard let self, self.currentThumbPath == path else { return }
+            self.showThumb(decoded)
         }) {
             showThumb(img)
         } else {
