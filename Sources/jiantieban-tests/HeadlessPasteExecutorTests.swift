@@ -19,6 +19,7 @@ enum HeadlessPasteExecutorTests {
         var isTrusted = true
     }
 
+    @MainActor
     private final class Fixture {
         let clipboard = Clipboard()
         let permission = Permission()

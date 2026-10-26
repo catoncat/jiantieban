@@ -110,7 +110,7 @@ enum HeadlessPasteCommand {
             let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
             return item.kind == .image && item.imageHash == hash
         }
-        if let text = snapshot.text {
+        if let text = snapshot.text, !text.isEmpty {
             return item.kind == .text && item.content == String(text.prefix(max(0, maxSaveLength)))
         }
         // Empty/unsupported pasteboards have no new supported record to await.

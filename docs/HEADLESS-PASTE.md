@@ -61,8 +61,9 @@ include `invalid_arguments`, `item_not_found`, `history_empty`, `history_not_cur
 `format_unavailable`, `content_unavailable`, `accessibility_required`, `target_changed`,
 `clipboard_changed`, `modifiers_timeout`, `modifiers_changed`, `event_unavailable`,
 `paste_busy`, `lock_unavailable`, and `storage_error`.
-`clipboard_changed:true` means failure occurred after a write (or an unsuccessful write
-changed pasteboard ownership); it does not mean a paste event was sent. There is no
+`clipboard_changed:true` means failure occurred after a write, or pasteboard ownership
+changed during a failed write attempt (possibly due to another app). It does not prove
+that this process caused the change or that a paste event was sent. There is no
 silent copy-only success or automatic retry.
 
 The process must already have macOS Accessibility permission; the command neither
