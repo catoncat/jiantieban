@@ -23,7 +23,7 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     // The standalone CLI and the .app must use the same preference domain.
-    private let defaults = UserDefaults(suiteName: PreferencesDomain.name)!
+    private let defaults = PreferencesDomain.defaults()!
 
     // MARK: 热键（默认 ⇧⌘V，可在设置页切换）
     @Published var hotkeyModifiersRaw: UInt32 {

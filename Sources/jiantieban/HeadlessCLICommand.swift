@@ -4,7 +4,7 @@ import PastebackPlatform
 
 @MainActor
 enum HeadlessCLICommand {
-    static let version = "0.3.0"
+    static let version = "0.3.1"
     static let help = """
     usage: jiantieban <command> [options]
       help [command] [--json] / version [--json]

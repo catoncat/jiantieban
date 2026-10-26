@@ -5,6 +5,8 @@ Usage: python3 Scripts/test-headless-settings.py [path/to/jiantieban]
 import json
 import os
 from pathlib import Path
+import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,6 +89,41 @@ def main():
                         "imagePasteAsFile", "ocrLanguages"):
                 subprocess.run([executable, "config", "reset", key], env=env,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+
+        # Exercise the actual bundle-identity branch without writing rs.jiantieban.
+        # An override unrelated to Bundle.main.bundleIdentifier hides this regression.
+        bundle_suite = "rs.jiantieban.bundle-test." + uuid.uuid4().hex
+        app = Path(root) / "SettingsTest.app"
+        contents = app / "Contents"
+        bundled_binary = contents / "MacOS" / "jiantieban"
+        bundled_binary.parent.mkdir(parents=True)
+        shutil.copy2(binary, bundled_binary)
+        with (contents / "Info.plist").open("wb") as info:
+            plistlib.dump({"CFBundleIdentifier": bundle_suite,
+                          "CFBundleExecutable": "jiantieban",
+                          "CFBundlePackageType": "APPL"}, info)
+        # Only this temporary fixture is ad-hoc signed; no identity/keychain changes.
+        subprocess.run(["codesign", "--force", "--sign", "-", str(app)],
+                       check=True, capture_output=True, text=True, timeout=10)
+        executable = str(bundled_binary)
+        bundle_home = Path(root) / "bundle-data"
+        env.update(JIANTIEBAN_HOME=str(bundle_home), JIANTIEBAN_PREFERENCES_SUITE=bundle_suite)
+        try:
+            initial = invoke("config", "get", "maxSaveLength")
+            assert initial["preferences_domain"] == bundle_suite
+            assert initial["settings"] == {"maxSaveLength": 12000}
+            invoke("config", "set", "maxSaveLength", "1000")
+            assert invoke("config", "get", "maxSaveLength")["settings"] == {"maxSaveLength": 1000}
+            assert not bundle_home.exists(), "Bundled config commands created storage"
+            # add-text initializes the same AppSettings.shared used by GUI startup.
+            added = invoke("add-text", "x" * 1001, "--json")
+            assert added["truncated"] is True
+            assert invoke("get", added["item"]["id"])["content"] == "x" * 1000
+            invoke("config", "reset", "maxSaveLength")
+            assert invoke("config", "get", "maxSaveLength")["settings"] == {"maxSaveLength": 12000}
+        finally:
+            subprocess.run([executable, "config", "reset", "maxSaveLength"], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     print("headless settings/diagnostics contracts passed")
 
 

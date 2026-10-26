@@ -1,5 +1,34 @@
 # Mac 本地验证记录：通用无界面 CLI
 
+## 0.3.1 修复与实测更新
+
+2026-10-26，**0.3.1 已完成本机修复、构建、测试和默认域 GUI 启动验证，尚未上传或发布**。以下为本次实际结果；后面的 0.3.0 记录保留当时状态，不代表当前版本或发布状态。
+
+- 问题复现：0.3.0 已安装 bundle 的默认域 `config get` 返回 `preferences_unavailable`，GUI 启动 SIGTRAP；使用隔离 suite 则成功。`UserDefaults(suiteName:)` 对自身 bundle ID 返回 nil，原 GUI 强制解包导致崩溃。
+- 最小修复涉及 `HeadlessSettings.swift`、`AppSettings.swift` 和 `test-headless-settings.py`：GUI 与 CLI 共用 resolver；选中域等于当前 bundle ID 时返回 `.standard`，其他域保留 suite 初始化结果，不以默认域吞掉失败。回归在唯一临时 bundle ID 与同名 suite 中读写、重置并验证 AppSettings，不写用户设置域。CLI 与两个 plist 版本字段均为 `0.3.1`。
+- 最终五条命令均退出 0：
+
+| 命令 | 0.3.1 实际结果 |
+| --- | --- |
+| `make test` | **173 passed, 0 failed** |
+| `make bundle` | arm64 release CLI 与 App 构建成功 |
+| `python3 Scripts/test-headless-cli.py` | paste 进程/JSON 失败路径通过 |
+| `python3 Scripts/test-cli.py` | **98 processes** 通过 |
+| `python3 Scripts/test-headless-settings.py` | 设置、诊断及同 bundle ID 偏好域回归通过 |
+
+- ad-hoc 签名后，针对 App 二进制再次执行三个 Python 合同脚本，全部退出 0。
+- 真实默认域下，独立 CLI 与 App CLI 的 `config get hardLimit` 均返回 `600`、退出 0、stderr 为空。
+- 本机现有用户安装位置的 App 使用真实默认域、无环境变量覆盖，已正常持续运行超过 **2 分 20 秒**。升级前后仅核对历史数量、原有 ID 完整性与数据库健康：**464 → 464，原有 ID 缺失数 0，`quick_check=ok`**；未读取历史正文，未修改用户配置。
+
+| 0.3.1 产物 | SHA256 |
+| --- | --- |
+| App zip | `839afc45a38847ca28276cf2cb7b217e4e7756bd968bad013474d8360b1bf0f5` |
+| App executable | `db46be2b339ddb2b01a9b4b11e6db37472070d4cd037b6f4206d0decabea71bc` |
+
+本次产物为 **arm64、ad-hoc 签名，未公证**；没有运行 GitHub CI。**macRs 尚待部署，真实目标 App 成功贴回仍未验收**，不能由正常启动或程序合同测试推定贴回成功。0.3.1 的源码和构建包尚未上传，Release 尚未发布。
+
+## 0.3.0 历史记录
+
 2026-10-26，在用户授权的 Mac 上完成 0.3.0 构建及最终五条命令验证。**本地 App 与独立 CLI 已可运行，写入本记录时远端发布未执行。** 没有运行 GitHub CI、创建/导入证书、公证或覆盖现有安装。用户已批准本次 App 的辅助功能权限，当前等待系统设置中的本机用户认证。
 
 ## 源码与工具链

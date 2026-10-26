@@ -13,6 +13,15 @@ enum PreferencesDomain {
         let override = ProcessInfo.processInfo.environment["JIANTIEBAN_PREFERENCES_SUITE"]
         return override.flatMap { $0.isEmpty ? nil : $0 } ?? "rs.jiantieban"
     }
+
+    static func defaults() -> UserDefaults? {
+        let domain = name
+        // Foundation rejects using the running app's own identifier as a suite.
+        // Its standard defaults already use that domain; the standalone CLI still
+        // needs an explicit suite to share preferences with the app.
+        if domain == Bundle.main.bundleIdentifier { return .standard }
+        return UserDefaults(suiteName: domain)
+    }
 }
 
 /// Deliberately excludes security, permissions, launch-at-login and UI-only settings.
@@ -42,7 +51,7 @@ enum HeadlessSettings {
         guard let operation = arguments.first else {
             throw error("config requires get [key], set <key> <value>, or reset <key>")
         }
-        guard let defaults = UserDefaults(suiteName: PreferencesDomain.name) else {
+        guard let defaults = PreferencesDomain.defaults() else {
             throw CLIError("preferences_unavailable", "Cannot open preferences domain")
         }
         switch operation {
