@@ -23,6 +23,9 @@ public final class SQLiteDB {
             sqlite3_close(handle)
             throw SQLiteError(code: rc, message: msg)
         }
+        // GUI capture and short-lived CLI processes share this WAL database.
+        // Wait for brief writers instead of failing immediately with SQLITE_BUSY.
+        sqlite3_busy_timeout(handle, 2000)
     }
 
     deinit {
@@ -119,3 +122,4 @@ public final class SQLiteStmt {
 
     public func columnDouble(_ index: Int32) -> Double { sqlite3_column_double(stmt, index) }
 }
+

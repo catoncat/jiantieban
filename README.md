@@ -29,6 +29,10 @@ open build/jiantieban.app
 
 其他目标：`make build`（release 二进制）、`make test`、`make bench`（10 万条检索测速，数据写在 `/tmp`）、`make run`、`make clean`。
 
+## 无界面贴回
+
+`jiantieban paste <id>|--latest [--format default|plain|original]` 可供任意程序或脚本调用，不打开面板。结果和失败为 JSON；需要已有辅助功能权限。当前历史不保存文字格式，显式 `original` 对文本报错。详见 [接口与边界](docs/HEADLESS-PASTE.md)。
+
 ## 与 jt 的关系
 
 密钥功能由 [jt](https://github.com/catoncat/jt) 提供：真值只保存在 jt 的 vault 里，jiantieban 调用 jt 的命令完成标记、列出、贴明文、改名和删除，从不执行 `jt sync`。App 默认调用 `~/.local/bin/jt`，可用环境变量 `JT_BIN` 指定。
@@ -53,3 +57,4 @@ Skill 在 [jt 仓库](https://github.com/catoncat/jt) 的 `skills/jiantieban-sec
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
+

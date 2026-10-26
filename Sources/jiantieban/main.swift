@@ -58,7 +58,7 @@ func printPage(_ page: SearchPage) {
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
-if args.isEmpty || DebugFlags.showPanelOnLaunch {
+if args.isEmpty || (args.first != "paste" && DebugFlags.showPanelOnLaunch) {
     // 无参数 → App 模式（.app 双击 / 开机自启走这里）
     MainActor.assumeIsolated { runApp() }
 }
@@ -66,6 +66,7 @@ guard let command = args.first, command != "help" else {
     print("""
     usage: jiantieban <command>
       watch                 监听剪贴板（M1 CLI 模式，Ctrl+C 退出）
+      paste <id>|--latest [--format default|plain|original]  无界面贴回（JSON）
       list [page]           最近历史
       search <query>        搜索（支持 :img / :text / :fav / :secret 前缀）
       add-text <text>       手动写入一条文本（测试用）
@@ -87,6 +88,9 @@ guard let command = args.first, command != "help" else {
 
 @MainActor
 func run() throws {
+if command == "paste" {
+    exit(HeadlessPasteCommand.run(Array(args.dropFirst())))
+}
 let (store, pipeline, secrets) = try makeEngine()
 
 switch command {
@@ -199,3 +203,4 @@ do {
     FileHandle.standardError.write(Data("jiantieban: \(error.localizedDescription)\n".utf8))
     exit(1)
 }
+

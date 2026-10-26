@@ -22,7 +22,8 @@ extension Notification.Name {
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
-    private let defaults = UserDefaults.standard
+    // The standalone CLI and the .app must use the same preference domain.
+    private let defaults = UserDefaults(suiteName: "rs.jiantieban")!
 
     // MARK: 热键（默认 ⇧⌘V，可在设置页切换）
     @Published var hotkeyModifiersRaw: UInt32 {
@@ -119,7 +120,7 @@ final class AppSettings: ObservableObject {
     }
 
     private init() {
-        let d = UserDefaults.standard
+        let d = defaults
         self.hotkeyModifiersRaw = d.uint32("hotkeyModifiers", fallback: UInt32(cmdKey) | UInt32(shiftKey))
         self.hotkeyKeyCode = d.uint32("hotkeyKeyCode", fallback: UInt32(kVK_ANSI_V))
         self.retentionPreset = d.string(forKey: "retentionPreset") ?? "24h"
@@ -219,3 +220,4 @@ private extension UserDefaults {
         object(forKey: key) as? [String]
     }
 }
+

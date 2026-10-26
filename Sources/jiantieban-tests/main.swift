@@ -5,6 +5,8 @@ let suites: [(String, [TestCase])] = [
     ("Ingest", IngestTests.all),
     ("Secret", SecretTests.all),
     ("PastebackCoordinator", PastebackCoordinatorTests.all),
+    ("HeadlessPaste", HeadlessPasteTests.all),
+    ("HeadlessPasteExecutor", HeadlessPasteExecutorTests.all),
     ("SystemPastebackClipboard", SystemPastebackClipboardTests.all),
     ("ItemActions", ItemActionsTests.all),
     ("Keymap", KeymapTests.all),
@@ -38,3 +40,4 @@ for (suite, tests) in suites {
 
 print("\n\(passed) passed, \(failed) failed")
 if failed > 0 { exit(1) }
+
