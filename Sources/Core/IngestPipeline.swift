@@ -32,8 +32,8 @@ public final class IngestPipeline {
     public init(store: ClipStore, imageStore: ImageStore) {
         self.store = store
         self.imageStore = imageStore
-        self.ocr = OCRQueue(onResult: { [weak store] itemID, text in
-            try? store?.setOCRText(text, forItemID: itemID)
+        self.ocr = OCRQueue(onImageResult: { [weak store] itemID, imageURL, text in
+            try? store?.setOCRText(text, forItemID: itemID, expectedImagePath: imageURL.path)
         })
     }
 
@@ -79,14 +79,14 @@ public final class IngestPipeline {
             )
         } catch {
             // 入库失败：刚写的文件没人引用，删掉再报错
-            ImageStore.removeFiles([saved.imagePath, saved.thumbPath])
+            imageStore.removeFiles([saved.imagePath, saved.thumbPath])
             throw error
         }
         if inserted {
             ocr.enqueue(itemID: item.id, imageURL: URL(fileURLWithPath: saved.imagePath))
         } else {
             // 重复图片：删除刚保存的文件
-            ImageStore.removeFiles([saved.imagePath, saved.thumbPath])
+            imageStore.removeFiles([saved.imagePath, saved.thumbPath])
         }
         return item
     }
@@ -94,7 +94,7 @@ public final class IngestPipeline {
     private func applyPrune() throws {
         let result = try store.prune()
         if !result.removedImageFiles.isEmpty {
-            ImageStore.removeFiles(result.removedImageFiles)
+            imageStore.removeFiles(result.removedImageFiles)
         }
     }
 }

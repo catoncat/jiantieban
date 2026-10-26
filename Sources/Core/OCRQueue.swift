@@ -12,10 +12,14 @@ public final class OCRQueue: @unchecked Sendable {
     private let worker = DispatchQueue(label: "rs.jiantieban.ocr")
 
     /// 结果回调，在主线程触发（Store 约定主线程使用）
-    private let onResult: (Int64, String) -> Void
+    private let onResult: (Int64, URL, String) -> Void
 
-    public init(onResult: @escaping (Int64, String) -> Void) {
-        self.onResult = onResult
+    public init(onImageResult: @escaping (Int64, URL, String) -> Void) {
+        self.onResult = onImageResult
+    }
+
+    public convenience init(onResult: @escaping (Int64, String) -> Void) {
+        self.init(onImageResult: { itemID, _, text in onResult(itemID, text) })
     }
 
     /// OCR 识别语言，可由设置页覆盖；默认简体/繁体中文 + 英文。
@@ -48,7 +52,7 @@ public final class OCRQueue: @unchecked Sendable {
             lock.unlock()
 
             if let text = recognize(imageURL: job.imageURL, languages: languages), !text.isEmpty {
-                DispatchQueue.main.async { self.onResult(job.itemID, text) }
+                DispatchQueue.main.async { self.onResult(job.itemID, job.imageURL, text) }
             }
         }
     }

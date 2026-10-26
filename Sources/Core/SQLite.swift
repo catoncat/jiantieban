@@ -55,6 +55,37 @@ public final class SQLiteDB {
         return SQLiteStmt(db: self, stmt: stmt)
     }
 
+    /// Switching journal modes can return SQLITE_BUSY without invoking SQLite's
+    /// busy handler when concurrent openers are upgrading their locks. Retry only
+    /// this idempotent pragma; replaying arbitrary SQL could repeat a mutation.
+    public func enableWriteAheadLogging() throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while true {
+            do {
+                try exec("PRAGMA journal_mode = WAL")
+                return
+            } catch let error as SQLiteError {
+                guard error.code == SQLITE_BUSY,
+                      ProcessInfo.processInfo.systemUptime < deadline else { throw error }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+    }
+
+    /// Serialize a complete read/modify/write operation across processes. Callers must
+    /// finish stepping statements before returning; nested transactions are not supported.
+    public func transaction<T>(write: Bool = true, _ body: () throws -> T) throws -> T {
+        try exec(write ? "BEGIN IMMEDIATE" : "BEGIN")
+        do {
+            let result = try body()
+            try exec("COMMIT")
+            return result
+        } catch {
+            try? exec("ROLLBACK")
+            throw error
+        }
+    }
+
     public var lastInsertRowID: Int64 { sqlite3_last_insert_rowid(handle) }
 
     fileprivate func checkOK(_ rc: Int32, context: String) throws {
@@ -122,4 +153,3 @@ public final class SQLiteStmt {
 
     public func columnDouble(_ index: Int32) -> Double { sqlite3_column_double(stmt, index) }
 }
-

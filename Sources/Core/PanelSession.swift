@@ -123,7 +123,7 @@ public final class PanelSession {
         /// 刚删掉的那条：库里已删，图片文件留到撤销失效时才删。
         case deletion(item: ClipItem, index: Int)
         /// 刚手动标记的那条：真值已交给 jt，撤销时取回写回。
-        case mark(itemId: Int64)
+        case mark(item: ClipItem)
     }
     private var pendingUndo: PendingUndo?
     /// 密钥视图里按过一次删除、等再按一次确认的那条 jt 记录。换行、别的命令、改搜索、关面板都取消。
@@ -299,18 +299,19 @@ public final class PanelSession {
             return paste(item)
 
         case .pasteAsSecret:
-            if item.isSecret { return execute(.secretReference(item.secretToken ?? item.content), itemID: item.id) }
+            if item.isSecret { return execute(.secretReference(item.secretToken ?? item.content), item: item) }
             guard ItemActions.can(.pasteAsSecret, item) else { return [] }
             commitPendingUndo() // 也是一次标记：之前那次标记不能再撤销；它自己关面板，不提供撤销
             return attempt {
-                let token = try secrets.pasteAsSecret(id: item.id)
-                return execute(.secretReference(token), itemID: item.id)
+                let marked = try secrets.markAsSecret(id: item.id, expectedItem: item)
+                guard let token = marked.secretToken else { throw StoreError.notSecret }
+                return execute(.secretReference(token), item: marked)
             }
 
         case .pastePlaintext:
             guard item.isSecret else { return paste(item) }
             guard ItemActions.can(.pastePlaintext, item) else { return [] }
-            return attempt { execute(.secretPlaintext(try secrets.resolveValue(for: item)), itemID: item.id) }
+            return attempt { execute(.secretPlaintext(try secrets.resolveValue(for: item)), item: item) }
 
         case .markSecret:
             // 引用记录上没有这个动作：没有"取消密钥"（ADR-0001）
@@ -319,8 +320,9 @@ public final class PanelSession {
             return attempt {
                 // 推荐要在标记之前算：标记后本地只剩引用，明文交给了 jt
                 let suggestion = SecretNaming.suggestion(forPlaintext: item.content, namespace: secrets.recentNamespace())
-                replaceInPlace(try secrets.markAsSecret(id: item.id))
-                pendingUndo = .mark(itemId: item.id)
+                let marked = try secrets.markAsSecret(id: item.id, expectedItem: item)
+                replaceInPlace(marked)
+                pendingUndo = .mark(item: marked)
                 // 刚标记的密钥直接进入改名；Esc 就保持"未命名密钥"。改名框里的 ⌘Z 是文字撤销，不走这里
                 return [.toast("已存为密钥" + undoHint), .beginRename(row: .clip(item.id), suggestion: suggestion)]
             }
@@ -374,10 +376,10 @@ public final class PanelSession {
         if command != .delete { armedRecordDeletion = nil }
         switch command {
         case .paste, .pasteAsSecret:
-            return execute(.secretReference(record.reference), itemID: nil)
+            return execute(.secretReference(record.reference), item: nil)
 
         case .pastePlaintext:
-            return attempt { execute(.secretPlaintext(try secrets.resolve(token: record.reference)), itemID: nil) }
+            return attempt { execute(.secretPlaintext(try secrets.resolve(token: record.reference)), item: nil) }
 
         case .rename:
             guard record.userFacingName == nil else { return [.beginRename(row: .secret(record.id))] }
@@ -431,8 +433,8 @@ public final class PanelSession {
         switch pending {
         case .deletion(let item, let index):
             return undoDeletion(item, at: index)
-        case .mark(let itemId):
-            return undoMark(itemId)
+        case .mark(let item):
+            return undoMark(item)
         }
     }
 
@@ -475,8 +477,9 @@ public final class PanelSession {
     public func rename(row: RowID, to name: String) -> [PanelEffect] {
         switch row {
         case .clip(let itemId):
+            guard let item = items.first(where: { $0.id == itemId }) else { return [] }
             return attempt {
-                replaceInPlace(try secrets.setName(id: itemId, name: name))
+                replaceInPlace(try secrets.setName(id: itemId, name: name, expectedItem: item))
                 return []
             }
         case .secret(let recordId):
@@ -526,13 +529,13 @@ public final class PanelSession {
     }
 
     /// 取回真值写回原记录并删掉 jt 里刚建的那条；失败时密钥原样可用（见 SecretManager.undoMark）。
-    private func undoMark(_ itemId: Int64) -> [PanelEffect] {
+    private func undoMark(_ item: ClipItem) -> [PanelEffect] {
         attempt {
-            let result = try secrets.undoMark(id: itemId)
+            let result = try secrets.undoMark(id: item.id, expectedItem: item)
             // 撤销窗口内同一明文又被复制进历史时两条合并，被并掉的那行也要从列表拿走
             if let merged = result.mergedDuplicateID { removeRow(.clip(merged)) }
             replaceInPlace(result.item)
-            if let row = items.firstIndex(where: { $0.id == itemId }) { select(row) }
+            if let row = items.firstIndex(where: { $0.id == item.id }) { select(row) }
             return []
         }
     }
@@ -632,21 +635,21 @@ public final class PanelSession {
     }
 
     private func paste(_ item: ClipItem) -> [PanelEffect] {
-        if item.isSecret { return execute(.secretReference(item.secretToken ?? item.content), itemID: item.id) }
+        if item.isSecret { return execute(.secretReference(item.secretToken ?? item.content), item: item) }
         switch item.kind {
         case .text:
-            return execute(.text(item.content), itemID: item.id)
+            return execute(.text(item.content), item: item)
         case .image:
             guard let path = item.imagePath else { return handle(.contentUnavailable, content: nil) }
-            return execute(.image(path: path, asFile: imagePasteAsFile()), itemID: item.id)
+            return execute(.image(path: path, asFile: imagePasteAsFile()), item: item)
         }
     }
 
-    /// itemID：贴回的剪贴板记录，贴成功后标为"贴过"（保留策略用）；jt 记录不在历史里，传 nil。
-    private func execute(_ content: PastebackContent, itemID: Int64?) -> [PanelEffect] {
+    /// Preserve the selected record snapshot while dispatch is pending; IDs may be reused.
+    private func execute(_ content: PastebackContent, item: ClipItem?) -> [PanelEffect] {
         let result = pasteback.execute(content, intent: pasteback.mode) { [weak self] in
-            guard let self, let itemID else { return }
-            do { try self.store.markPasted(id: itemID) }
+            guard let self, let item else { return }
+            do { try self.store.markPasted(id: item.id, expectedItem: item) }
             catch { NSLog("[jtb] failed to retain pasted item: \(error)") }
         }
         return handle(result, content: content)

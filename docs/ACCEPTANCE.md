@@ -1,11 +1,11 @@
 # jiantieban 发布前人工验收清单
 
-需要真人操作的项。每次发布前在 macOS 26+ 上用 `make app` 的 release 构建跑一遍。
+需要真人操作的项。每次发布前在 macOS 26+ 上用最终 release 构建跑一遍。本地先执行 `make bundle`；不要直接运行会自动创建/导入身份的 `make app` / `make sign`。签名、公证与逐次授权要求见 [LOCAL-RELEASE.md](LOCAL-RELEASE.md)，实际构建和测试记录见 [MAC-VALIDATION.md](MAC-VALIDATION.md)。
 
 ## 0. 构建
 
-- [ ] `make test` 全部通过
-- [ ] `make app` 产出并签名 `build/jiantieban.app`，启动后菜单栏出现图标
+- [x] `make test` 全部通过（2026-10-26：173/0，见 MAC-VALIDATION.md）
+- [ ] `make bundle` 产出 `build/jiantieban.app`；记录最终签名状态，启动后菜单栏出现图标
 
 ## 1. 面板
 
@@ -111,7 +111,7 @@
 
 ## 5. 无界面 CLI 贴回（首期）
 
-- [ ] `make test`、`make bundle`、`python3 Scripts/test-headless-cli.py` 通过
+- [x] `make test`、`make bundle`、`python3 Scripts/test-headless-cli.py` 通过（本地最终版本，见 MAC-VALIDATION.md）
 - [ ] 富文本复制并采集后，`paste <id>` / `paste --latest --format plain` 在原前台编辑器贴入纯文本，不出现面板、不抢焦点；默认与现有面板相同
 - [ ] 复制后立即调用 `--latest`：等待监控入库或报 `history_not_current`，绝不误贴旧记录；隐私模式/排除策略不被绕过
 - [ ] 从普通程序和 shell 调用，记录 ID 可选，格式覆盖有效；不依赖任何快捷键配置
@@ -121,3 +121,23 @@
 - [ ] 两进程并发调用：相同数据目录最多一个进行，其余 `paste_busy`；App 持续采集时无数据库锁崩溃
 - [ ] CLI 直接运行 .app 内二进制与独立二进制均读同一 `rs.jiantieban` 图片贴回设置；不改用户快捷键
 - [ ] 引用记录各种 format 均只贴引用，不调用 jt resolve
+
+## 6. 通用无界面 CLI（程序与脚本）
+
+以下项应记录构建 commit、未提交源码状态与实际结果；未在真人授权的 Mac 上执行的项目保持未勾选。程序测试中的模拟与失败路径检查不证明目标 App 收到了真实粘贴。本次改造由 Codex 在已授权 Mac 手动运行，不新增或依赖 CI；最终结果见 [MAC-VALIDATION.md](MAC-VALIDATION.md)，不能由本清单的命令或历史测试推定通过。
+
+- [x] 在已授权 Mac 依次运行 `make test`、`make bundle`、`python3 Scripts/test-headless-cli.py`、`python3 Scripts/test-cli.py`、`python3 Scripts/test-headless-settings.py`，记录准确 commit、工具链和各命令实际结果（见 MAC-VALIDATION.md）
+- [ ] 带命令调用时不出现面板、欢迎页或设置页，不注册热键、不激活目标 App、不自动申请权限；无参数仍按旧方式启动 App
+- [ ] 对照 [HEADLESS-CLI.md](HEADLESS-CLI.md) 验证帮助、所有新命令、旧命令及 `--json`；参数错误非零退出，不产生半截 JSON 或混入日志
+- [ ] JSON 中 ID 为字符串，时间为 UTC ISO 8601；中文、多行、引号与 emoji 可正确解析；选择器为空、冲突、负数、溢出及未知选项均明确失败
+- [ ] 写入/变更命令只返回最小元数据，不回显正文/引用 token/来源；stdin 超过 16 MiB 明确失败，普通截断单独标识
+- [ ] `get` 只读取所选历史；普通文本可显式获取，密钥引用始终只返回引用、不调用 `jt resolve`；缺失记录失败；图片只返回元数据/路径、`--raw` 返回格式不可用，不假装返回图片字节或恢复原始格式
+- [ ] 超过默认 12000 字符的文本仅可读回实际保存的前缀；不能恢复 RTF/HTML、丢弃后缀或任意原始剪贴板类型
+- [ ] `copy` 不需辅助功能、不发按键、不抢焦点；`get` / `copy --latest` 只选已入库历史，不冒充 `paste --latest` 的新鲜度等待；成功只代表写入剪贴板，不标为已贴回，不误触永久保留
+- [ ] `paste` 保留 §5 全部安全边界；`event_sent` 不表述为目标 App 已接受，失败后不自动重试
+- [ ] `config get/set/reset` 校验允许的键与值；拒绝未知键和无效类型；不改变热键、登录项或授权；按文档验证重启后生效，不宣称运行中进程即时同步
+- [ ] `doctor` 只报告当前进程可观察的状态，不创建/迁移数据库、请求权限、打开 UI、写剪贴板或调用 jt；不可用项不会被误报为健康
+- [ ] `watch` 尊重隐私模式及疑似密钥排除，长驻保留文本输出、拒绝 `--json`，不声称提供 NDJSON 事件流；自写标记不重复采集，退出无额外面板
+- [ ] 删除、收藏、清空和 `mark-secret` 的旧功能保留；`clear` 缺少 `--yes` 不清库；旧密钥命令仍返回 jt 去向和退出码 2
+- [ ] `.app` 内二进制与独立二进制读取同一设置域；自定义数据目录不被误称为偏好设置沙箱；跨进程设置修改按重启约定验证
+- [ ] 保留旧数据库无需迁移；明确告知 ID 可能重用，脚本不把历史 ID 当作永久引用

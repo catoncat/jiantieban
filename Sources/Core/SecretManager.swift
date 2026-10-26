@@ -16,8 +16,8 @@ public final class SecretManager {
     }
 
     @discardableResult
-    public func markAsSecret(id: Int64, name: String? = nil) throws -> ClipItem {
-        guard let item = try store.item(id: id) else { throw StoreError.itemNotFound }
+    public func markAsSecret(id: Int64, name: String? = nil, expectedItem: ClipItem? = nil) throws -> ClipItem {
+        let item = try currentItem(id: id, expected: expectedItem)
         guard item.kind == .text else { throw StoreError.notTextItem }
         if item.isSecret { return item }
 
@@ -29,20 +29,21 @@ public final class SecretManager {
             token: reference,
             type: SecretDetector.detect(item.content)?.rawValue,
             name: secretName,
-            maskedPreview: SecretMask.fixed(item.content)
+            maskedPreview: SecretMask.fixed(item.content),
+            expectedItem: item
         )
     }
 
     /// 撤销刚才的标记：真值写回原记录，删掉刚建的 jt 记录。只给面板的一次性撤销用——
     /// 没有面向用户的"取消密钥"（ADR-0001），标错了靠这个兜底。
     @discardableResult
-    public func undoMark(id: Int64) throws -> UnmarkResult {
-        guard let item = try store.item(id: id) else { throw StoreError.itemNotFound }
+    public func undoMark(id: Int64, expectedItem: ClipItem? = nil) throws -> UnmarkResult {
+        let item = try currentItem(id: id, expected: expectedItem)
         guard item.isSecret else { return UnmarkResult(item: item, mergedDuplicateID: nil) }
         guard let reference = item.secretToken else { throw JTClientError.missingReference }
         // 顺序：取回真值 → 写库 → 库成功后才从 vault 删。任何一步失败，密钥都还完整可用。
         let plaintext = try jt.resolve(reference: reference)
-        let result = try store.unmarkSecret(id: id, plaintextContent: plaintext)
+        let result = try store.unmarkSecret(id: id, plaintextContent: plaintext, expectedItem: item)
         do {
             try jt.remove(reference: reference)
         } catch {
@@ -75,12 +76,27 @@ public final class SecretManager {
     }
 
     @discardableResult
-    public func setName(id: Int64, name: String) throws -> ClipItem {
-        guard let item = try store.item(id: id) else { throw StoreError.itemNotFound }
+    public func setName(id: Int64, name: String, expectedItem: ClipItem? = nil) throws -> ClipItem {
+        let item = try currentItem(id: id, expected: expectedItem)
         if let reference = item.secretToken {
             try jt.rename(reference: reference, name: name)
         }
-        return try store.setSecretName(id: id, name: name)
+        return try store.setSecretName(id: id, name: name, expectedItem: item)
+    }
+
+    /// Validate the panel's snapshot before any jt side effect. Store validates
+    /// again after jt returns; unrelated display metadata may change meanwhile.
+    private func currentItem(id: Int64, expected: ClipItem?) throws -> ClipItem {
+        guard let item = try store.item(id: id) else { throw StoreError.itemNotFound }
+        if let expected {
+            guard item.id == expected.id, item.createdAt == expected.createdAt,
+                  item.kind == expected.kind, item.content == expected.content,
+                  item.imagePath == expected.imagePath, item.imageHash == expected.imageHash,
+                  item.isSecret == expected.isSecret, item.secretToken == expected.secretToken else {
+                throw StoreError.itemChanged
+            }
+        }
+        return item
     }
 
     // MARK: - jt 记录（密钥视图）

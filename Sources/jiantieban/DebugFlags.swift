@@ -7,9 +7,9 @@ enum DebugFlags {
     private static let args = CommandLine.arguments
 
     /// 启动后立刻显示面板，失焦不自动关（screencapture 会抢 key window）
-    static let showPanelOnLaunch = args.contains("_debug-panel") || args.contains("_debug-scroll")
+    static let showPanelOnLaunch = ["_debug-panel", "_debug-scroll"].contains(args.dropFirst().first ?? "")
     /// 显示后 60Hz 连续下移选择，复现快速导航滚动问题 + sample 采样
-    static let autoScroll = args.contains("_debug-scroll")
+    static let autoScroll = args.dropFirst().first == "_debug-scroll"
 
     /// 纯色底替代玻璃（浅色白 / 暗色黑），并隐藏光标：截图可逐像素比对
     static let solidBackground = flag("JIANTIEBAN_DEBUG_SOLID")

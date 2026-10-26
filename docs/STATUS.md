@@ -6,13 +6,13 @@
 
 | 范围 | 状态 | 内容 |
 |---|---|---|
-| 采集 | ✅ | 0.8s 轮询；文本（截断 12000 字符）、图片（原图落盘 + 64px 缩略图 + SHA256 去重）；OCR（Vision，串行，队列上限 8） |
+| 采集 | ✅ | 0.8s 轮询；文本（默认截断 12000 字符）、图片（原图落盘 + 64px 缩略图 + SHA256 去重）；OCR（Vision，串行，队列上限 8） |
 | 存储 / 搜索 | ✅ | SQLite WAL + FTS5 trigram，短词退化 LIKE；`:text` `:img` `:fav` `:secret` 前缀；保留时长 / 条数上限，收藏和贴回过的豁免 |
 | 面板 | ✅ | 非激活 NSPanel + Liquid Glass（可选兼容风格）；键盘全集与可自定义键位；筛选 chip；⌘1–9；停留自动展开；删除 / 标记撤销；右键菜单；打开面板时输入法切 ABC、关闭时恢复 |
 | 贴回 | ✅ | 一键贴回 / 仅复制两种模式，实时跟随辅助功能权限；图片可贴为图片或文件 |
 | 浏览器来源 | 🧪 | Chrome（Apple Events）/ Helium（辅助功能）普通窗口的标题和 URL；实际复制往返与 Chrome 授权待验 |
 | 密钥 | ✅ | 标记 + 命名建议 + ⌘Z 撤销；粘贴为密钥；密钥视图读 `jt ls --json`；引用记录跟随 jt；未同步提示；普通路径零 jt 调用；从不 `jt sync` |
-| CLI / Skill | ✅ | `jiantieban help` 列出的剪贴板命令 + `mark-secret`；旧密钥命令只给去向；Skill 在 jt 仓库 |
+| CLI / Skill | 🧪 | 扁平程序接口：旧命令可选 JSON、新增 `get` / `copy` / `config` / `doctor`，`paste` 保留旧契约；`clear --yes`；[协议与边界](HEADLESS-CLI.md)。本地编译、测试及实际复制/贴回与跨进程设置验收结果见 [MAC-VALIDATION.md](MAC-VALIDATION.md)，未执行项仍待验；旧密钥命令只给 jt 去向，Skill 在 jt 仓库 |
 | 设置 | ✅ | 通用 / 快捷键 / 历史 / 贴回 / 隐私 / 外观 / 高级 七页；快捷键录键真机交互待验 🧪 |
 | 首启 / 菜单栏 | ✅ | 欢迎页 + 启用一键贴回页；菜单栏显示当前贴回模式 |
 | 构建 | ✅ | CLT + SPM + Makefile；自签证书签名；占位图标；`make test` / `make bench` / `make measure` |
@@ -32,7 +32,7 @@
 - 不识别 `concealed` / `transient` 剪贴板类型，也没有“忽略应用”清单；密码管理器复制的内容会进历史（可开“自动排除疑似密钥”或隐私模式）。
 - 贴回过的记录永久保留，没有总量上限。
 - 没有自动更新。
-- 没有 CI。
+- 本次通用 CLI 的最终本地构建与测试证据见 [MAC-VALIDATION.md](MAC-VALIDATION.md)；按用户要求不新增或依赖 CI。首期 paste 的历史 153 项测试/CI 结果不是当前改造的通过证据；签名、公证和远端发布仍按 [LOCAL-RELEASE.md](LOCAL-RELEASE.md) 分别完成。
 - 默认热键 ⌘⇧V 可能与其他工具冲突。
 - 界面只有中文；Finder 显示名是“剪贴板”，与菜单、CLI 里的 jiantieban 不一致。
 - 浏览器来源只支持 Chrome 和 Helium。

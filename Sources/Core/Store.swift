@@ -36,25 +36,31 @@ public enum StoreError: Error, CustomStringConvertible, LocalizedError {
     case notTextItem
     case alreadySecret
     case notSecret
+    case invalidPagination
     case restoreConflict
+    case itemChanged
 
     public var description: String {
         switch self {
+        case .invalidPagination: return "invalid pagination"
         case .itemNotFound: return "item not found"
         case .notTextItem: return "only text items can be marked as secret"
         case .alreadySecret: return "item is already a secret"
         case .notSecret: return "item is not a secret"
         case .restoreConflict: return "cannot restore: id or content is taken by a newer item"
+        case .itemChanged: return "item changed while the operation was in progress"
         }
     }
 
     public var errorDescription: String? {
         switch self {
+        case .invalidPagination: return "分页参数无效"
         case .itemNotFound: return "这条记录已经不在了"
         case .notTextItem: return "只有文本能标记为密钥"
         case .alreadySecret: return "已经是密钥了"
         case .notSecret: return "这条不是密钥"
         case .restoreConflict: return "撤销不了：这期间有新记录占了它的位置"
+        case .itemChanged: return "记录已改变，操作未应用到新记录"
         }
     }
 }
@@ -81,9 +87,14 @@ public final class ClipStore {
     public init(path: String, config: StoreConfig = StoreConfig()) throws {
         self.db = try SQLiteDB(path: path)
         self.config = config
-        try db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
-        try createSchema()
-        try migrateItemColumns()
+        try db.enableWriteAheadLogging()
+        try db.exec("PRAGMA synchronous = NORMAL")
+        // Inspect and migrate under one writer lock: another CLI/GUI opener may
+        // have completed the same migration while this connection was waiting.
+        try db.transaction {
+            try createSchema()
+            try migrateItemColumns()
+        }
     }
 
     /// 内存库，供测试
@@ -180,9 +191,7 @@ public final class ClipStore {
     private func migrateFTS() throws {
         let existing = Set(try ftsColumnNames())
         guard !existing.contains("source_url") else { return }
-        try db.exec("BEGIN IMMEDIATE")
-        do {
-            try db.exec("""
+        try db.exec("""
             DROP TRIGGER IF EXISTS items_ai;
             DROP TRIGGER IF EXISTS items_ad;
             DROP TRIGGER IF EXISTS items_au;
@@ -191,11 +200,6 @@ public final class ClipStore {
             INSERT INTO items_fts(rowid, content, ocr_text, image_path, secret_name, source_title, source_url)
             SELECT id, content, ocr_text, image_path, secret_name, source_title, source_url FROM items;
             """)
-            try db.exec("COMMIT")
-        } catch {
-            try? db.exec("ROLLBACK")
-            throw error
-        }
     }
 
     private func ftsColumnNames() throws -> [String] {
@@ -243,6 +247,7 @@ public final class ClipStore {
     }
 
     /// 按 id 获取单条记录。
+    /// IDs identify current rows, not durable handles: SQLite may reuse a deleted maximum ID.
     public func item(id: Int64) throws -> ClipItem? {
         try fetchItem(id: id)
     }
@@ -262,42 +267,50 @@ public final class ClipStore {
         _ rawContent: String,
         at time: Date = Date()
     ) throws -> (item: ClipItem, inserted: Bool) {
-        var content = rawContent
-        if content.count > config.maxSaveLength {
-            content = String(content.prefix(config.maxSaveLength))
+        return try db.transaction(write: true) {
+            var content = rawContent
+            if content.count > config.maxSaveLength {
+                content = String(content.prefix(config.maxSaveLength))
+            }
+            if let existing = try findByContent(content, kind: .text) {
+                try touch(id: existing.id, at: time)
+                guard let item = try fetchItem(id: existing.id) else { throw StoreError.itemNotFound }
+                return (item, false)
+            }
+            let stmt = try db.prepare("""
+                INSERT INTO items (kind, content, last_copied_at, created_at)
+                VALUES ('text', ?1, ?2, ?2)
+                """)
+            try stmt.bind(1, content)
+            try stmt.bind(2, time.timeIntervalSince1970)
+            _ = try stmt.step()
+            guard let item = try fetchItem(id: db.lastInsertRowID) else { throw StoreError.itemNotFound }
+            return (item, true)
         }
-        if let existing = try findByContent(content, kind: .text) {
-            try touch(id: existing.id, at: time)
-            return (try fetchItem(id: existing.id)!, false)
-        }
-        let stmt = try db.prepare("""
-            INSERT INTO items (kind, content, last_copied_at, created_at)
-            VALUES ('text', ?1, ?2, ?2)
-            """)
-        try stmt.bind(1, content)
-        try stmt.bind(2, time.timeIntervalSince1970)
-        _ = try stmt.step()
-        return (try fetchItem(id: db.lastInsertRowID)!, true)
     }
 
     /// 图片入库。若 hash 命中既有条目：刷新时间并返回 (既有条目, false)，
     /// 调用方应删除刚保存的重复图片文件。
     @discardableResult
     public func upsertImage(imagePath: String, thumbPath: String, hash: String, at time: Date = Date()) throws -> (item: ClipItem, inserted: Bool) {
-        if let existing = try findByImageHash(hash) {
-            try touch(id: existing.id, at: time)
-            return (try fetchItem(id: existing.id)!, false)
+        return try db.transaction(write: true) {
+            if let existing = try findByImageHash(hash) {
+                try touch(id: existing.id, at: time)
+                guard let item = try fetchItem(id: existing.id) else { throw StoreError.itemNotFound }
+                return (item, false)
+            }
+            let stmt = try db.prepare("""
+                INSERT INTO items (kind, content, image_path, thumb_path, image_hash, last_copied_at, created_at)
+                VALUES ('image', '[图片]', ?1, ?2, ?3, ?4, ?4)
+                """)
+            try stmt.bind(1, imagePath)
+            try stmt.bind(2, thumbPath)
+            try stmt.bind(3, hash)
+            try stmt.bind(4, time.timeIntervalSince1970)
+            _ = try stmt.step()
+            guard let item = try fetchItem(id: db.lastInsertRowID) else { throw StoreError.itemNotFound }
+            return (item, true)
         }
-        let stmt = try db.prepare("""
-            INSERT INTO items (kind, content, image_path, thumb_path, image_hash, last_copied_at, created_at)
-            VALUES ('image', '[图片]', ?1, ?2, ?3, ?4, ?4)
-            """)
-        try stmt.bind(1, imagePath)
-        try stmt.bind(2, thumbPath)
-        try stmt.bind(3, hash)
-        try stmt.bind(4, time.timeIntervalSince1970)
-        _ = try stmt.step()
-        return (try fetchItem(id: db.lastInsertRowID)!, true)
     }
 
     private func findByContent(_ content: String, kind: ClipItemKind) throws -> ClipItem? {
@@ -338,22 +351,35 @@ public final class ClipStore {
     }
 
     /// 只有从本 App 发出贴回指令才调用；单纯复制到剪贴板不算。
-    public func markPasted(id: Int64) throws {
-        let stmt = try db.prepare("UPDATE items SET was_pasted = 1 WHERE id = ?1")
-        try stmt.bind(1, id)
-        _ = try stmt.step()
+    public func markPasted(id: Int64, expectedItem: ClipItem? = nil) throws {
+        try db.transaction {
+            guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            try verifyIdentity(item, expected: expectedItem)
+            let stmt = try db.prepare("UPDATE items SET was_pasted = 1 WHERE id = ?1")
+            try stmt.bind(1, id)
+            _ = try stmt.step()
+        }
     }
 
-    public func setOCRText(_ text: String, forItemID id: Int64) throws {
-        let stmt = try db.prepare("UPDATE items SET ocr_text = ?1 WHERE id = ?2")
+    /// Async OCR results belong to the image that was queued, not a later row
+    /// reusing its ID. Production callers supply that image's unique stored path.
+    @discardableResult
+    public func setOCRText(_ text: String, forItemID id: Int64, expectedImagePath: String? = nil) throws -> Bool {
+        let stmt = try db.prepare("""
+            UPDATE items SET ocr_text = ?1
+            WHERE id = ?2 AND kind = 'image' AND (?3 IS NULL OR image_path = ?3)
+            RETURNING id
+            """)
         try stmt.bind(1, text)
         try stmt.bind(2, id)
-        _ = try stmt.step()
+        try stmt.bind(3, expectedImagePath)
+        return try stmt.step()
     }
 
     // MARK: - 密钥记录
 
-    /// 把一条文本记录标记为密钥：content 改为密文，并记录 token / 类型 / 名称 / 遮罩。
+    /// 把一条文本记录标记为密钥：content 改为引用，并记录 token / 类型 / 名称 / 遮罩。
+    /// expectedItem is the snapshot sent to jt; its ID may have been reused while jt ran.
     @discardableResult
     public func markAsSecret(
         id: Int64,
@@ -361,38 +387,54 @@ public final class ClipStore {
         token: String,
         type: String?,
         name: String?,
-        maskedPreview: String
+        maskedPreview: String,
+        expectedItem: ClipItem? = nil
     ) throws -> ClipItem {
-        guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
-        guard item.kind == .text else { throw StoreError.notTextItem }
-        guard !item.isSecret else { throw StoreError.alreadySecret }
-        let stmt = try db.prepare("""
-            UPDATE items
-            SET content = ?1, is_secret = 1, secret_token = ?2, secret_type = ?3,
-                secret_name = ?4, masked_preview = ?5, secret_missing = 0,
-                source_app = NULL, source_title = NULL, source_url = NULL
-            WHERE id = ?6
-            """)
-        try stmt.bind(1, encryptedContent)
-        try stmt.bind(2, token)
-        try stmt.bind(3, type)
-        try stmt.bind(4, name)
-        try stmt.bind(5, maskedPreview)
-        try stmt.bind(6, id)
-        _ = try stmt.step()
-        guard let updated = try fetchItem(id: id) else { throw StoreError.itemNotFound }
-        return updated
+        try db.transaction {
+            guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            try verifyIdentity(item, expected: expectedItem)
+            guard item.kind == .text else { throw StoreError.notTextItem }
+            guard !item.isSecret else { throw StoreError.alreadySecret }
+            let stmt = try db.prepare("""
+                UPDATE items
+                SET content = ?1, is_secret = 1, secret_token = ?2, secret_type = ?3,
+                    secret_name = ?4, masked_preview = ?5, secret_missing = 0,
+                    source_app = NULL, source_title = NULL, source_url = NULL
+                WHERE id = ?6
+                """)
+            try stmt.bind(1, encryptedContent)
+            try stmt.bind(2, token)
+            try stmt.bind(3, type)
+            try stmt.bind(4, name)
+            try stmt.bind(5, maskedPreview)
+            try stmt.bind(6, id)
+            _ = try stmt.step()
+            guard let updated = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            return updated
+        }
+    }
+
+    /// Metadata such as favorites may change while jt runs without changing which
+    /// record the operation targets. Check the stable row identity and value only.
+    private func verifyIdentity(_ item: ClipItem, expected: ClipItem?) throws {
+        guard let expected else { return }
+        guard item.id == expected.id, item.createdAt == expected.createdAt,
+              item.kind == expected.kind, item.content == expected.content,
+              item.imagePath == expected.imagePath, item.imageHash == expected.imageHash,
+              item.isSecret == expected.isSecret, item.secretToken == expected.secretToken else {
+            throw StoreError.itemChanged
+        }
     }
 
     /// 撤销标记：content 写回明文，清空密钥字段。只由 SecretManager.undoMark 调用（没有面向用户的取消密钥）。
     /// 明文已作为普通记录存在（撤销窗口内又复制了一次同样的值）时合并成一条：保留这条的 id，
     /// 最近复制时间取较新、任一收藏/贴回即保留，来源取较新的普通复制；删掉重复记录。一个事务里完成。
     @discardableResult
-    public func unmarkSecret(id: Int64, plaintextContent: String) throws -> UnmarkResult {
-        guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
-        guard item.isSecret else { throw StoreError.notSecret }
-        try db.exec("BEGIN IMMEDIATE")
-        do {
+    public func unmarkSecret(id: Int64, plaintextContent: String, expectedItem: ClipItem? = nil) throws -> UnmarkResult {
+        try db.transaction {
+            guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            try verifyIdentity(item, expected: expectedItem)
+            guard item.isSecret else { throw StoreError.notSecret }
             var lastCopiedAt = item.lastCopiedAt
             var isFavorite = item.isFavorite
             var wasPasted = item.wasPasted
@@ -424,26 +466,25 @@ public final class ClipStore {
             try stmt.bind(7, source?.url)
             try stmt.bind(8, id)
             _ = try stmt.step()
-            try db.exec("COMMIT")
             guard let updated = try fetchItem(id: id) else { throw StoreError.itemNotFound }
             return UnmarkResult(item: updated, mergedDuplicateID: mergedID)
-        } catch {
-            try? db.exec("ROLLBACK")
-            throw error
         }
     }
 
     /// 修改密钥记录的备注/名称。
     @discardableResult
-    public func setSecretName(id: Int64, name: String) throws -> ClipItem {
-        guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
-        guard item.isSecret else { throw StoreError.notSecret }
-        let stmt = try db.prepare("UPDATE items SET secret_name = ?1 WHERE id = ?2")
-        try stmt.bind(1, name.isEmpty ? nil : name)
-        try stmt.bind(2, id)
-        _ = try stmt.step()
-        guard let updated = try fetchItem(id: id) else { throw StoreError.itemNotFound }
-        return updated
+    public func setSecretName(id: Int64, name: String, expectedItem: ClipItem? = nil) throws -> ClipItem {
+        try db.transaction {
+            guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            try verifyIdentity(item, expected: expectedItem)
+            guard item.isSecret else { throw StoreError.notSecret }
+            let stmt = try db.prepare("UPDATE items SET secret_name = ?1 WHERE id = ?2")
+            try stmt.bind(1, name.isEmpty ? nil : name)
+            try stmt.bind(2, id)
+            _ = try stmt.step()
+            guard let updated = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            return updated
+        }
     }
 
     // MARK: - 引用记录的展示缓存（名称 / 遮罩 / 是否已从 jt 删除，以 jt 为准，ADR-0001）
@@ -460,27 +501,25 @@ public final class ClipStore {
     @discardableResult
     public func syncSecretReferences(with records: [SecretRecord]) throws -> Int {
         let byReference = Dictionary(records.map { ($0.reference, $0) }, uniquingKeysWith: { first, _ in first })
-        let select = try db.prepare("""
-            SELECT id, secret_token, secret_name, masked_preview, secret_missing
-            FROM items WHERE is_secret = 1 AND secret_token IS NOT NULL
-            """)
-        var updates: [(id: Int64, name: String?, preview: String?, missing: Bool)] = []
-        while try select.step() {
-            let id = select.columnInt64(0)
-            let name = select.columnTextOrNil(2)
-            let preview = select.columnTextOrNil(3)
-            let missing = select.columnInt64(4) != 0
-            if let record = byReference[select.columnText(1)] {
-                if name != record.name || preview != record.preview || missing {
-                    updates.append((id, record.name, record.preview, false))
+        return try db.transaction {
+            let select = try db.prepare("""
+                SELECT id, secret_token, secret_name, masked_preview, secret_missing
+                FROM items WHERE is_secret = 1 AND secret_token IS NOT NULL
+                """)
+            var updates: [(id: Int64, name: String?, preview: String?, missing: Bool)] = []
+            while try select.step() {
+                let id = select.columnInt64(0)
+                let name = select.columnTextOrNil(2)
+                let preview = select.columnTextOrNil(3)
+                let missing = select.columnInt64(4) != 0
+                if let record = byReference[select.columnText(1)] {
+                    if name != record.name || preview != record.preview || missing {
+                        updates.append((id, record.name, record.preview, false))
+                    }
+                } else if !missing {
+                    updates.append((id, name, preview, true))
                 }
-            } else if !missing {
-                updates.append((id, name, preview, true))
             }
-        }
-        guard !updates.isEmpty else { return 0 }
-        try db.exec("BEGIN IMMEDIATE")
-        do {
             for update in updates {
                 let stmt = try db.prepare("UPDATE items SET secret_name = ?1, masked_preview = ?2, secret_missing = ?3 WHERE id = ?4")
                 try stmt.bind(1, update.name)
@@ -489,12 +528,8 @@ public final class ClipStore {
                 try stmt.bind(4, update.id)
                 _ = try stmt.step()
             }
-            try db.exec("COMMIT")
-        } catch {
-            try? db.exec("ROLLBACK")
-            throw error
+            return updates.count
         }
-        return updates.count
     }
 
     /// jt 里改了名：持有这个引用的记录跟着改。
@@ -521,80 +556,101 @@ public final class ClipStore {
 
     // MARK: - 收藏 / 删除 / 清空
 
-    /// 切换收藏，返回新状态
+    /// 切换收藏，返回新状态。
     @discardableResult
     public func toggleFavorite(id: Int64) throws -> Bool {
-        let stmt = try db.prepare("UPDATE items SET is_favorite = 1 - is_favorite WHERE id = ?1 RETURNING is_favorite")
-        try stmt.bind(1, id)
-        guard try stmt.step() else { return false }
-        return stmt.columnInt64(0) != 0
+        try toggleFavoriteItem(id: id).isFavorite
+    }
+
+    /// Toggle and return the same row under one writer lock. CLI callers must not
+    /// refetch after committing: a concurrent delete/reinsert could change identity.
+    @discardableResult
+    public func toggleFavoriteItem(id: Int64) throws -> ClipItem {
+        try db.transaction {
+            let stmt = try db.prepare("UPDATE items SET is_favorite = 1 - is_favorite WHERE id = ?1")
+            try stmt.bind(1, id)
+            _ = try stmt.step()
+            guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            return item
+        }
     }
 
     /// 直接设置收藏状态（导入器用）
-    public func setFavorite(_ favorite: Bool, id: Int64) throws {
-        let stmt = try db.prepare("UPDATE items SET is_favorite = ?1 WHERE id = ?2")
-        try stmt.bind(1, Int64(favorite ? 1 : 0))
-        try stmt.bind(2, id)
-        _ = try stmt.step()
+    @discardableResult
+    public func setFavorite(_ favorite: Bool, id: Int64) throws -> ClipItem {
+        return try db.transaction(write: true) {
+            let stmt = try db.prepare("UPDATE items SET is_favorite = ?1 WHERE id = ?2")
+            try stmt.bind(1, Int64(favorite ? 1 : 0))
+            try stmt.bind(2, id)
+            _ = try stmt.step()
+            guard let item = try fetchItem(id: id) else { throw StoreError.itemNotFound }
+            return item
+        }
     }
 
     /// 删除条目，返回被删条目（调用方清理图片文件）
     @discardableResult
     public func delete(id: Int64) throws -> ClipItem? {
-        guard let item = try fetchItem(id: id) else { return nil }
-        let stmt = try db.prepare("DELETE FROM items WHERE id = ?1")
-        try stmt.bind(1, id)
-        _ = try stmt.step()
-        return item
+        return try db.transaction(write: true) {
+            guard let item = try fetchItem(id: id) else { return nil }
+            let stmt = try db.prepare("DELETE FROM items WHERE id = ?1")
+            try stmt.bind(1, id)
+            _ = try stmt.step()
+            return item
+        }
     }
 
     /// 把删掉的记录按原字段放回（撤销删除）：id、内容、收藏、时间、OCR 文字、密钥字段都不变。
     /// 删除后又入库了同样内容的记录、或新记录复用了这个 id（SQLite 会复用最大 id）时抛 restoreConflict，不覆盖新记录。
     public func restore(_ item: ClipItem) throws {
-        if try fetchItem(id: item.id) != nil { throw StoreError.restoreConflict }
-        switch item.kind {
-        case .text:
-            if try findByContent(item.content, kind: .text) != nil { throw StoreError.restoreConflict }
-        case .image:
-            if let hash = item.imageHash, try findByImageHash(hash) != nil { throw StoreError.restoreConflict }
+        return try db.transaction(write: true) {
+            if try fetchItem(id: item.id) != nil { throw StoreError.restoreConflict }
+            switch item.kind {
+            case .text:
+                if try findByContent(item.content, kind: .text) != nil { throw StoreError.restoreConflict }
+            case .image:
+                if let hash = item.imageHash, try findByImageHash(hash) != nil { throw StoreError.restoreConflict }
+            }
+            let stmt = try db.prepare("""
+                INSERT INTO items (\(Self.itemColumns))
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                """)
+            try stmt.bind(1, item.id)
+            try stmt.bind(2, item.kind.rawValue)
+            try stmt.bind(3, item.content)
+            try stmt.bind(4, item.imagePath)
+            try stmt.bind(5, item.thumbPath)
+            try stmt.bind(6, item.imageHash)
+            try stmt.bind(7, item.ocrText)
+            try stmt.bind(8, Int64(item.isFavorite ? 1 : 0))
+            try stmt.bind(9, item.lastCopiedAt.timeIntervalSince1970)
+            try stmt.bind(10, item.createdAt.timeIntervalSince1970)
+            try stmt.bind(11, Int64(item.isSecret ? 1 : 0))
+            try stmt.bind(12, item.secretToken)
+            try stmt.bind(13, item.secretType)
+            try stmt.bind(14, item.secretName)
+            try stmt.bind(15, item.maskedPreview)
+            try stmt.bind(16, Int64(item.wasPasted ? 1 : 0))
+            try stmt.bind(17, item.browserSource?.bundleID)
+            try stmt.bind(18, item.browserSource?.title)
+            try stmt.bind(19, item.browserSource?.url)
+            try stmt.bind(20, Int64(item.secretMissing ? 1 : 0))
+            _ = try stmt.step()
         }
-        let stmt = try db.prepare("""
-            INSERT INTO items (\(Self.itemColumns))
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
-            """)
-        try stmt.bind(1, item.id)
-        try stmt.bind(2, item.kind.rawValue)
-        try stmt.bind(3, item.content)
-        try stmt.bind(4, item.imagePath)
-        try stmt.bind(5, item.thumbPath)
-        try stmt.bind(6, item.imageHash)
-        try stmt.bind(7, item.ocrText)
-        try stmt.bind(8, Int64(item.isFavorite ? 1 : 0))
-        try stmt.bind(9, item.lastCopiedAt.timeIntervalSince1970)
-        try stmt.bind(10, item.createdAt.timeIntervalSince1970)
-        try stmt.bind(11, Int64(item.isSecret ? 1 : 0))
-        try stmt.bind(12, item.secretToken)
-        try stmt.bind(13, item.secretType)
-        try stmt.bind(14, item.secretName)
-        try stmt.bind(15, item.maskedPreview)
-        try stmt.bind(16, Int64(item.wasPasted ? 1 : 0))
-        try stmt.bind(17, item.browserSource?.bundleID)
-        try stmt.bind(18, item.browserSource?.title)
-        try stmt.bind(19, item.browserSource?.url)
-        try stmt.bind(20, Int64(item.secretMissing ? 1 : 0))
-        _ = try stmt.step()
     }
 
     /// 清空全部，返回需清理的图片文件
     public func clear() throws -> [String] {
-        var files: [String] = []
-        let stmt = try db.prepare("SELECT image_path, thumb_path FROM items WHERE kind = 'image'")
-        while try stmt.step() {
-            if let p = stmt.columnTextOrNil(0) { files.append(p) }
-            if let p = stmt.columnTextOrNil(1), p != stmt.columnTextOrNil(0) { files.append(p) }
+        return try db.transaction(write: true) {
+            var files: [String] = []
+            let stmt = try db.prepare("SELECT image_path, thumb_path FROM items WHERE kind = 'image'")
+            while try stmt.step() {
+                if let p = stmt.columnTextOrNil(0) { files.append(p) }
+                if let p = stmt.columnTextOrNil(1), p != stmt.columnTextOrNil(0) { files.append(p) }
+            }
+            try db.exec("DELETE FROM items")
+            return files
         }
-        try db.exec("DELETE FROM items")
-        return files
     }
 
     // MARK: - 保留策略（24h + 600 上限，收藏豁免）
@@ -629,14 +685,14 @@ public final class ClipStore {
             byLimit = try db.prepare("""
                 DELETE FROM items WHERE was_pasted = 0 AND is_favorite = 0 AND id NOT IN (
                     SELECT id FROM items WHERE was_pasted = 0 AND is_favorite = 0
-                    ORDER BY last_copied_at DESC LIMIT ?1
+                    ORDER BY last_copied_at DESC, id DESC LIMIT ?1
                 ) RETURNING image_path, thumb_path
                 """)
         } else {
             byLimit = try db.prepare("""
                 DELETE FROM items WHERE was_pasted = 0 AND id NOT IN (
                     SELECT id FROM items WHERE was_pasted = 0
-                    ORDER BY last_copied_at DESC LIMIT ?1
+                    ORDER BY last_copied_at DESC, id DESC LIMIT ?1
                 ) RETURNING image_path, thumb_path
                 """)
         }
@@ -673,95 +729,104 @@ public final class ClipStore {
 
     /// 列表（无关键词）或搜索。trigram FTS 需要 ≥3 字符，更短的关键词退化为 LIKE 子串。
     public func search(_ query: SearchQuery, page: Int = 1, pageSize: Int = 80) throws -> SearchPage {
-        func filterParts(alias: String) -> [String] {
-            var parts: [String] = []
-            if let kind = query.kindFilter {
-                parts.append("\(alias).kind = '\(kind.rawValue)'")
-            }
-            if query.favoritesOnly {
-                parts.append("\(alias).is_favorite = 1")
-            }
-            if query.secretsOnly {
-                parts.append("\(alias).is_secret = 1")
-            }
-            return parts
+        guard page > 0, pageSize > 0,
+              !(page - 1).multipliedReportingOverflow(by: pageSize).overflow else {
+            throw StoreError.invalidPagination
         }
+        return try searchSnapshot(query, page: page, pageSize: pageSize)
+    }
 
-        var matchWhere: [String] = []
-        var keywordParam: String? = nil
-        var joinsFTS = false
+    private func searchSnapshot(_ query: SearchQuery, page: Int, pageSize: Int) throws -> SearchPage {
+        return try db.transaction(write: false) {
+            func filterParts(alias: String) -> [String] {
+                var parts: [String] = []
+                if let kind = query.kindFilter {
+                    parts.append("\(alias).kind = '\(kind.rawValue)'")
+                }
+                if query.favoritesOnly {
+                    parts.append("\(alias).is_favorite = 1")
+                }
+                if query.secretsOnly {
+                    parts.append("\(alias).is_secret = 1")
+                }
+                return parts
+            }
 
-        let keyword = query.keyword.trimmingCharacters(in: .whitespaces)
-        if !keyword.isEmpty {
-            if keyword.count >= 3 {
-                joinsFTS = true
-                // FTS5 短语查询：双引号包裹得到子串语义（trigram 分词器）
-                keywordParam = "\"" + keyword.replacing("\"", with: "\"\"") + "\""
-                matchWhere.append("items_fts MATCH ?1")
+            var matchWhere: [String] = []
+            var keywordParam: String? = nil
+            var joinsFTS = false
+
+            let keyword = query.keyword.trimmingCharacters(in: .whitespaces)
+            if !keyword.isEmpty {
+                if keyword.count >= 3 {
+                    joinsFTS = true
+                    // FTS5 短语查询：双引号包裹得到子串语义（trigram 分词器）
+                    keywordParam = "\"" + keyword.replacing("\"", with: "\"\"") + "\""
+                    matchWhere.append("items_fts MATCH ?1")
+                } else {
+                    keywordParam = "%" + escapeLike(keyword) + "%"
+                    matchWhere.append("(i.content LIKE ?1 ESCAPE '\\' OR i.ocr_text LIKE ?1 ESCAPE '\\' OR i.image_path LIKE ?1 ESCAPE '\\' OR i.secret_name LIKE ?1 ESCAPE '\\' OR i.source_title LIKE ?1 ESCAPE '\\' OR i.source_url LIKE ?1 ESCAPE '\\')")
+                }
+            }
+
+            let whereParts = filterParts(alias: "i") + matchWhere
+            let whereSQL = whereParts.isEmpty ? "" : "WHERE " + whereParts.joined(separator: " AND ")
+            let fromSQL = joinsFTS
+                ? "FROM items i JOIN items_fts ON items_fts.rowid = i.id"
+                : "FROM items i"
+            let kwOffset: Int32 = keywordParam != nil ? 1 : 0
+
+            func bindAll(_ stmt: SQLiteStmt, paging: Bool) throws {
+                if let keywordParam { try stmt.bind(1, keywordParam) }
+                if paging {
+                    let page = max(1, page)
+                    try stmt.bind(1 + kwOffset, Int64(pageSize))
+                    try stmt.bind(2 + kwOffset, Int64((page - 1) * pageSize))
+                }
+            }
+
+            // 快速路径：无条目级过滤的 FTS 查询直接数 FTS 表，避免 10 万级 rowid JOIN
+            let useFastCount = joinsFTS && query.kindFilter == nil && !query.favoritesOnly && !query.secretsOnly
+            let countSQL = useFastCount
+                ? "SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH ?1"
+                : "SELECT COUNT(*) \(fromSQL) \(whereSQL)"
+            let totalStmt = try db.prepare(countSQL)
+            try bindAll(totalStmt, paging: false)
+            guard try totalStmt.step() else {
+                return SearchPage(items: [], total: 0, page: page, pageSize: pageSize)
+            }
+            let total = Int(totalStmt.columnInt64(0))
+
+            let stmt: SQLiteStmt
+            if joinsFTS {
+                // 两阶段：内层只排序 (id, last_copied_at) 轻行，避免对 10 万条宽行建临时 B-tree；
+                // 外层按主键回取 80 条宽行。
+                let innerParts = filterParts(alias: "i2") + (keywordParam != nil ? ["items_fts MATCH ?1"] : [])
+                let innerWhere = innerParts.isEmpty ? "" : "WHERE " + innerParts.joined(separator: " AND ")
+                stmt = try db.prepare("""
+                    SELECT \(Self.selectColumns)
+                    FROM items i
+                    JOIN (
+                        SELECT i2.id AS id, i2.last_copied_at AS lca
+                        FROM items i2 JOIN items_fts ON items_fts.rowid = i2.id
+                        \(innerWhere)
+                        ORDER BY i2.last_copied_at DESC, i2.id DESC
+                        LIMIT ?\(1 + kwOffset) OFFSET ?\(2 + kwOffset)
+                    ) r ON r.id = i.id
+                    ORDER BY r.lca DESC, r.id DESC
+                    """)
             } else {
-                keywordParam = "%" + escapeLike(keyword) + "%"
-                matchWhere.append("(i.content LIKE ?1 ESCAPE '\\' OR i.ocr_text LIKE ?1 ESCAPE '\\' OR i.image_path LIKE ?1 ESCAPE '\\' OR i.secret_name LIKE ?1 ESCAPE '\\' OR i.source_title LIKE ?1 ESCAPE '\\' OR i.source_url LIKE ?1 ESCAPE '\\')")
-            }
-        }
-
-        let whereParts = filterParts(alias: "i") + matchWhere
-        let whereSQL = whereParts.isEmpty ? "" : "WHERE " + whereParts.joined(separator: " AND ")
-        let fromSQL = joinsFTS
-            ? "FROM items i JOIN items_fts ON items_fts.rowid = i.id"
-            : "FROM items i"
-        let kwOffset: Int32 = keywordParam != nil ? 1 : 0
-
-        func bindAll(_ stmt: SQLiteStmt, paging: Bool) throws {
-            if let keywordParam { try stmt.bind(1, keywordParam) }
-            if paging {
-                let page = max(1, page)
-                try stmt.bind(1 + kwOffset, Int64(pageSize))
-                try stmt.bind(2 + kwOffset, Int64((page - 1) * pageSize))
-            }
-        }
-
-        // 快速路径：无条目级过滤的 FTS 查询直接数 FTS 表，避免 10 万级 rowid JOIN
-        let useFastCount = joinsFTS && query.kindFilter == nil && !query.favoritesOnly && !query.secretsOnly
-        let countSQL = useFastCount
-            ? "SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH ?1"
-            : "SELECT COUNT(*) \(fromSQL) \(whereSQL)"
-        let totalStmt = try db.prepare(countSQL)
-        try bindAll(totalStmt, paging: false)
-        guard try totalStmt.step() else {
-            return SearchPage(items: [], total: 0, page: page, pageSize: pageSize)
-        }
-        let total = Int(totalStmt.columnInt64(0))
-
-        let stmt: SQLiteStmt
-        if joinsFTS {
-            // 两阶段：内层只排序 (id, last_copied_at) 轻行，避免对 10 万条宽行建临时 B-tree；
-            // 外层按主键回取 80 条宽行。
-            let innerParts = filterParts(alias: "i2") + (keywordParam != nil ? ["items_fts MATCH ?1"] : [])
-            let innerWhere = innerParts.isEmpty ? "" : "WHERE " + innerParts.joined(separator: " AND ")
-            stmt = try db.prepare("""
-                SELECT \(Self.selectColumns)
-                FROM items i
-                JOIN (
-                    SELECT i2.id AS id, i2.last_copied_at AS lca
-                    FROM items i2 JOIN items_fts ON items_fts.rowid = i2.id
-                    \(innerWhere)
-                    ORDER BY i2.last_copied_at DESC
+                stmt = try db.prepare("""
+                    SELECT \(Self.selectColumns) \(fromSQL) \(whereSQL)
+                    ORDER BY i.last_copied_at DESC, i.id DESC
                     LIMIT ?\(1 + kwOffset) OFFSET ?\(2 + kwOffset)
-                ) r ON r.id = i.id
-                ORDER BY r.lca DESC
-                """)
-        } else {
-            stmt = try db.prepare("""
-                SELECT \(Self.selectColumns) \(fromSQL) \(whereSQL)
-                ORDER BY i.last_copied_at DESC
-                LIMIT ?\(1 + kwOffset) OFFSET ?\(2 + kwOffset)
-                """)
-        }
-        try bindAll(stmt, paging: true)
+                    """)
+            }
+            try bindAll(stmt, paging: true)
 
-        var items: [ClipItem] = []
-        while try stmt.step() { items.append(rowToItem(stmt)) }
-        return SearchPage(items: items, total: total, page: max(1, page), pageSize: pageSize)
+            var items: [ClipItem] = []
+            while try stmt.step() { items.append(rowToItem(stmt)) }
+            return SearchPage(items: items, total: total, page: max(1, page), pageSize: pageSize)
+        }
     }
 }
-

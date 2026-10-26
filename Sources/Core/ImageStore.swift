@@ -30,7 +30,7 @@ public final class ImageStore {
             throw CocoaError(.coderReadCorrupt)
         }
 
-        let id = "\(Int(now.timeIntervalSince1970))_\(Int.random(in: 1000...9999))"
+        let id = UUID().uuidString
         let imageURL = directory.appendingPathComponent("img_\(id).png")
         let thumbURL = directory.appendingPathComponent("thumb_\(id).png")
         try pngData.write(to: imageURL, options: .atomic)
@@ -58,9 +58,32 @@ public final class ImageStore {
         return url.path
     }
 
-    public static func removeFiles(_ paths: [String]) {
-        for path in paths {
-            try? FileManager.default.removeItem(atPath: path)
+    /// Cleanup is restricted to regular files directly owned by this image store.
+    /// Never follow database-supplied paths outside the managed directory.
+    public func removeFiles(_ paths: [String]) {
+        Self.removeFiles(paths, in: directory)
+    }
+
+    public static func removeFiles(_ paths: [String], in directory: URL? = nil) {
+        let manager = FileManager.default
+        let root: URL
+        if let directory {
+            root = directory
+        } else if let home = ProcessInfo.processInfo.environment["JIANTIEBAN_HOME"] {
+            root = URL(fileURLWithPath: home).appendingPathComponent("images")
+        } else {
+            guard let support = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+            root = support.appendingPathComponent("jiantieban/images")
+        }
+        let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath().path
+        for path in Set(paths) {
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            // Files are generated directly in images/, never in subdirectories.
+            guard url.deletingLastPathComponent().resolvingSymlinksInPath().path == canonicalRoot,
+                  url.resolvingSymlinksInPath().deletingLastPathComponent().path == canonicalRoot,
+                  let attributes = try? manager.attributesOfItem(atPath: url.path),
+                  attributes[.type] as? FileAttributeType == .typeRegular else { continue }
+            try? manager.removeItem(at: url)
         }
     }
 }

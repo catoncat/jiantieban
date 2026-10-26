@@ -26,6 +26,9 @@ enum PanelSessionTests {
         TestCase("撤销标记时 jt 取不回真值：报错，密钥原样可用", testUndoMarkFailureKeepsSecret),
         TestCase("删除密钥行只删本地记录，jt 里的真值还在", testDeleteSecretKeepsVaultValue),
         TestCase("删除后新记录复用了同一个 id：撤销报错，不覆盖新记录", testUndoConflictDoesNotOverwrite),
+        TestCase("面板快照过期：标记和贴密钥不操作复用 id 的新记录", testStaleMarkDoesNotTargetReplacement),
+        TestCase("标记后 id 被复用：改名和撤销不改新密钥、不取回或删除其真值", testStaleUndoAndRenameKeepReplacement),
+        TestCase("标记后的名称和收藏变化不阻止撤销，贴密钥仍在派发后保留", testSecretSnapshotsAllowMetadataChanges),
         TestCase("自动展开：移动中（含刚打开）不展开，停下后普通文本展开 N 行，再移动立即收回", testAutoUnfoldWaitsForSettle),
         TestCase("密钥、图片停下也不自动展开；⌘R 仍是明文 + 引用 / 大图", testSecretAndImageDoNotAutoUnfold),
         TestCase("⌘R 在「展开全部」和「停下时的展开」之间切换；移动中按 ⌘R 也算停下", testToggleExpandSwitchesLayers),
@@ -62,12 +65,27 @@ enum PanelSessionTests {
 
     /// 真实存在的图片文件（原图 + 缩略图），用来验证文件什么时候被删。
     private static func addImage(_ f: Fixture, hash: String, at seconds: Double) throws -> ClipItem {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("jtb-panel-\(UUID().uuidString)")
+        let home = try unwrap(ProcessInfo.processInfo.environment["JIANTIEBAN_HOME"])
+        let dir = URL(fileURLWithPath: home).appendingPathComponent("images")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let image = dir.appendingPathComponent("img.png").path
-        let thumb = dir.appendingPathComponent("thumb.png").path
+        let image = dir.appendingPathComponent("img-\(UUID().uuidString).png").path
+        let thumb = dir.appendingPathComponent("thumb-\(UUID().uuidString).png").path
         for path in [image, thumb] { try Data([0x89, 0x50]).write(to: URL(fileURLWithPath: path)) }
         return try f.store.upsertImage(imagePath: image, thumbPath: thumb, hash: hash, at: Date(timeIntervalSince1970: seconds)).item
+    }
+
+    /// Cleanup now accepts only managed images, so exercise the production layout
+    /// in a temporary data home instead of allowing arbitrary temporary paths.
+    private static func withImageHome(_ body: () throws -> Void) throws {
+        let previous = ProcessInfo.processInfo.environment["JIANTIEBAN_HOME"]
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jtb-panel-\(UUID().uuidString)")
+        setenv("JIANTIEBAN_HOME", directory.path, 1)
+        defer {
+            if let previous { setenv("JIANTIEBAN_HOME", previous, 1) }
+            else { unsetenv("JIANTIEBAN_HOME") }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try body()
     }
 
     private static func filesExist(_ item: ClipItem) -> Bool {
@@ -195,6 +213,15 @@ enum PanelSessionTests {
         f.permission.isTrusted = false
         _ = f.session.perform(.paste, row: 1)
         try expect(try f.store.item(id: copiedID)?.wasPasted == false, "仅复制到系统剪贴板不能算贴回")
+
+        let raced = try make(["original pending paste"])
+        let pendingID = raced.session.items[0].id
+        _ = raced.session.perform(.paste)
+        _ = try raced.store.delete(id: pendingID)
+        let replacement = try raced.store.upsertText("replacement", at: Date(timeIntervalSince1970: 1_800_000_000)).item
+        try expectEqual(replacement.id, pendingID)
+        raced.scheduler.run()
+        try expect(try raced.store.item(id: pendingID)?.wasPasted == false, "delayed paste must not retain a replacement record")
     }
 
     static func testUndoMarkMergeKeepsListConsistent() throws {
@@ -242,61 +269,65 @@ enum PanelSessionTests {
     }
 
     static func testUndoDeleteRestoresInPlace() throws {
-        let f = try make(["a", "b"])
-        let image = try addImage(f, hash: "undo-1", at: 1_750_000_000)
-        try f.store.setOCRText("发票 2026", forItemID: image.id)
-        try f.store.toggleFavorite(id: image.id)
-        try f.store.upsertText("newest", at: Date(timeIntervalSince1970: 1_800_000_000))
-        f.session.open() // 显示 newest, image, b, a
-        let original = try unwrap(try f.store.item(id: image.id))
-        let order = f.session.items.map(\.id)
-        f.session.select(1)
+        try withImageHome {
+            let f = try make(["a", "b"])
+            let image = try addImage(f, hash: "undo-1", at: 1_750_000_000)
+            try f.store.setOCRText("发票 2026", forItemID: image.id)
+            try f.store.toggleFavorite(id: image.id)
+            try f.store.upsertText("newest", at: Date(timeIntervalSince1970: 1_800_000_000))
+            f.session.open() // 显示 newest, image, b, a
+            let original = try unwrap(try f.store.item(id: image.id))
+            let order = f.session.items.map(\.id)
+            f.session.select(1)
 
-        try expectEqual(f.session.perform(.delete), [deletedToast])
-        try expect(try f.store.item(id: image.id) == nil, "deleted from the store right away")
-        try expect(filesExist(original), "image files wait until the undo expires")
-        try expect(f.session.canUndo)
+            try expectEqual(f.session.perform(.delete), [deletedToast])
+            try expect(try f.store.item(id: image.id) == nil, "deleted from the store right away")
+            try expect(filesExist(original), "image files wait until the undo expires")
+            try expect(f.session.canUndo)
 
-        try expectEqual(f.session.undo(), [])
-        try expectEqual(f.session.items.map(\.id), order, "back at the original position")
-        try expectEqual(f.session.selectedItem?.id, image.id)
-        try expectEqual(try f.store.item(id: image.id), original, "every field unchanged")
-        try expectEqual(f.session.items[1], original)
-        try expect(!f.session.canUndo, "one undo per deletion")
+            try expectEqual(f.session.undo(), [])
+            try expectEqual(f.session.items.map(\.id), order, "back at the original position")
+            try expectEqual(f.session.selectedItem?.id, image.id)
+            try expectEqual(try f.store.item(id: image.id), original, "every field unchanged")
+            try expectEqual(f.session.items[1], original)
+            try expect(!f.session.canUndo, "one undo per deletion")
 
-        // 撤销后重新打开面板：库里的顺序也是原来的
-        f.session.close()
-        try expect(filesExist(original), "restored item keeps its files")
-        f.session.open()
-        try expectEqual(f.session.items.map(\.id), order)
+            // 撤销后重新打开面板：库里的顺序也是原来的
+            f.session.close()
+            try expect(filesExist(original), "restored item keeps its files")
+            f.session.open()
+            try expectEqual(f.session.items.map(\.id), order)
+        }
     }
 
     static func testUndoExpires() throws {
-        let f = try make(["a", "b"])
-        let first = try addImage(f, hash: "expire-1", at: 1_800_000_000)
-        let second = try addImage(f, hash: "expire-2", at: 1_800_000_001)
-        f.session.open() // 显示 second, first, b, a
+        try withImageHome {
+            let f = try make(["a", "b"])
+            let first = try addImage(f, hash: "expire-1", at: 1_800_000_000)
+            let second = try addImage(f, hash: "expire-2", at: 1_800_000_001)
+            f.session.open() // 显示 second, first, b, a
 
-        // 面板关闭
-        _ = f.session.perform(.delete) // second
-        f.session.close()
-        try expect(f.session.undo() == nil, "closing the panel ends the undo")
-        try expect(!filesExist(second), "image files are removed once the undo expires")
+            // 面板关闭
+            _ = f.session.perform(.delete) // second
+            f.session.close()
+            try expect(f.session.undo() == nil, "closing the panel ends the undo")
+            try expect(!filesExist(second), "image files are removed once the undo expires")
 
-        // 又删了另一条：只能撤销最近那条，前一条的文件被删
-        f.session.open() // first, b, a
-        _ = f.session.perform(.delete) // first
-        _ = f.session.perform(.delete) // b
-        try expect(!filesExist(first))
-        try expectEqual(f.session.undo(), [])
-        try expectEqual(f.session.items.map(\.content), ["b", "a"])
-        try expect(f.session.undo() == nil)
+            // 又删了另一条：只能撤销最近那条，前一条的文件被删
+            f.session.open() // first, b, a
+            _ = f.session.perform(.delete) // first
+            _ = f.session.perform(.delete) // b
+            try expect(!filesExist(first))
+            try expectEqual(f.session.undo(), [])
+            try expectEqual(f.session.items.map(\.content), ["b", "a"])
+            try expect(f.session.undo() == nil)
 
-        // 搜索词变化
-        _ = f.session.perform(.delete) // b
-        f.session.setSearchText("a")
-        try expect(f.session.undo() == nil, "changing the search text ends the undo")
-        try expectEqual(try f.store.count(), 1)
+            // 搜索词变化
+            _ = f.session.perform(.delete) // b
+            f.session.setSearchText("a")
+            try expect(f.session.undo() == nil, "changing the search text ends the undo")
+            try expectEqual(try f.store.count(), 1)
+        }
     }
 
     static func testUndoWithoutDeletionIsUnhandled() throws {
@@ -415,6 +446,67 @@ enum PanelSessionTests {
         try expect(hasToast(effects), "got \(effects)")
         try expectEqual(try f.store.item(id: deletedId)?.content, "fresh", "the new item is untouched")
         try expect(!f.session.canUndo)
+    }
+
+    static func testStaleMarkDoesNotTargetReplacement() throws {
+        for command in [PanelCommand.markSecret, .pasteAsSecret] {
+            let f = try make(["original selected value"])
+            let original = try unwrap(f.session.selectedItem)
+            _ = try f.store.delete(id: original.id)
+            let replacement = try f.store.upsertText("unrelated replacement", at: Date(timeIntervalSince1970: 1_800_000_000)).item
+            try expectEqual(replacement.id, original.id)
+            f.jt.resetCalls()
+
+            let effects = f.session.perform(command)
+
+            try expect(hasToast(effects), "the stale panel selection must report a conflict")
+            try expectEqual(try f.store.item(id: replacement.id), replacement)
+            try expect(!f.jt.commands.contains("add"), "must reject before creating a secret for the replacement")
+            try expectEqual(f.clipboard.contents, [])
+            try expect(!f.session.canUndo)
+        }
+    }
+
+    static func testStaleUndoAndRenameKeepReplacement() throws {
+        let f = try make(["original mark value"])
+        _ = f.session.perform(.markSecret)
+        let original = try unwrap(f.session.selectedItem)
+        let originalToken = try unwrap(original.secretToken)
+        _ = try f.store.delete(id: original.id)
+        let replacement = try f.store.upsertText("replacement secret value", at: Date(timeIntervalSince1970: 1_800_000_000)).item
+        try expectEqual(replacement.id, original.id)
+        let marked = try f.secrets.markAsSecret(id: replacement.id, name: "test/replacement")
+        let replacementToken = try unwrap(marked.secretToken)
+        f.jt.resetCalls()
+
+        try expect(hasToast(f.session.rename(row: .clip(original.id), to: "wrong target")))
+        try expectEqual(f.jt.calls, [], "stale rename must not mutate a different jt record")
+        try expect(hasToast(try unwrap(f.session.undo())))
+        try expectEqual(f.jt.calls, [], "stale undo must not resolve or remove a different jt record")
+        try expectEqual(try f.store.item(id: marked.id), marked)
+        try expectEqual(f.jt.value(of: replacementToken), "replacement secret value")
+        try expectEqual(f.jt.value(of: originalToken), "original mark value")
+        try expect(!f.session.canUndo)
+    }
+
+    static func testSecretSnapshotsAllowMetadataChanges() throws {
+        let f = try make(["value to undo"])
+        _ = f.session.perform(.markSecret)
+        let marked = try unwrap(f.session.selectedItem)
+        try expectEqual(f.session.rename(row: .clip(marked.id), to: "test/renamed"), [])
+        _ = try f.store.setFavorite(true, id: marked.id)
+        try expectEqual(f.session.undo(), [])
+        let restored = try unwrap(try f.store.item(id: marked.id))
+        try expectEqual(restored.content, "value to undo")
+        try expect(restored.isFavorite && !restored.isSecret)
+
+        let pasted = try make(["value to paste as secret"])
+        let id = try unwrap(pasted.session.selectedItem).id
+        try expectEqual(pasted.session.perform(.pasteAsSecret), [.hide])
+        try expect(try pasted.store.item(id: id)?.wasPasted == false)
+        pasted.scheduler.run()
+        let retained = try unwrap(try pasted.store.item(id: id))
+        try expect(retained.isSecret && retained.wasPasted, "retention must compare against the marked snapshot")
     }
 
     // MARK: - 自动展开

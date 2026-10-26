@@ -29,9 +29,13 @@ open build/jiantieban.app
 
 其他目标：`make build`（release 二进制）、`make test`、`make bench`（10 万条检索测速，数据写在 `/tmp`）、`make run`、`make clean`。
 
-## 无界面贴回
+本次通用 CLI 改造由 Codex 在已授权的 Mac 上手动构建与测试，不新增或依赖 CI。当前改造尚未完成 Mac 编译验证；执行步骤与待验边界见 [CLI 验证交接](docs/HEADLESS-CLI.md#诊断验证与发行)。
 
-`jiantieban paste <id>|--latest [--format default|plain|original]` 可供任意程序或脚本调用，不打开面板。结果和失败为 JSON；需要已有辅助功能权限。当前历史不保存文字格式，显式 `original` 对文本报错。详见 [接口与边界](docs/HEADLESS-PASTE.md)。
+## 程序与脚本接口
+
+`get` 读取历史、`copy` 只写剪贴板、`paste` 向前台 App 发粘贴事件，均可由程序或脚本直接调用，不打开面板。`list` / `search` 等旧命令可选 `--json`；`config` 管理有限的历史/贴回设置，`doctor` 提供只读诊断。
+
+`paste <id>|--latest [--format default|plain|original]` 需要已有辅助功能权限，`copy` 不需要。文本只保留已存纯文本（默认截断 12000 字符），显式 `original` 对文本报错。清空历史现在必须用 `clear --yes`。完整命令、JSON 与兼容说明见 [无界面 CLI](docs/HEADLESS-CLI.md)；贴回的权限与竞态边界见 [贴回接口](docs/HEADLESS-PASTE.md)。
 
 ## 与 jt 的关系
 
@@ -57,4 +61,3 @@ Skill 在 [jt 仓库](https://github.com/catoncat/jt) 的 `skills/jiantieban-sec
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
-

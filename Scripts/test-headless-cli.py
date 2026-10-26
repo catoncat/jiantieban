@@ -1,14 +1,29 @@
 #!/usr/bin/env python3
-"""CLI process/JSON smoke tests; never paste or request Accessibility permission."""
+"""CLI process/JSON smoke tests; never paste or request Accessibility permission.
+
+Usage: python3 Scripts/test-headless-cli.py [path/to/jiantieban]
+Uses isolated history/preferences. The empty-history --latest case reads the
+system pasteboard for freshness comparison but never writes it or sends keys.
+"""
 import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
+import uuid
 
-binary = pathlib.Path(".build/release/jiantieban").resolve()
+if len(sys.argv) > 2:
+    raise SystemExit(__doc__)
+root = pathlib.Path(__file__).resolve().parent.parent
+binary = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else root / ".build/release/jiantieban"
+assert binary.is_file(), f"Build the executable first: {binary}"
 with tempfile.TemporaryDirectory(prefix="jiantieban-cli-test-") as directory:
-    env = {**os.environ, "JIANTIEBAN_HOME": directory}
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("JIANTIEBAN_")}
+    env.update(JIANTIEBAN_HOME=directory,
+               JIANTIEBAN_PREFERENCES_SUITE="rs.jiantieban.paste-tests." + uuid.uuid4().hex,
+               JT_BIN=str(pathlib.Path(directory) / "no-jt"))
     for args, exit_code, code in [
         (["paste"], 2, "invalid_arguments"),
         (["paste", "_debug-panel"], 2, "invalid_arguments"),

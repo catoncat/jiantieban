@@ -17,6 +17,8 @@ if CommandLine.arguments.count == 4,
 
 let suites: [(String, [TestCase])] = [
     ("Store", StoreTests.all),
+    ("HeadlessStore", HeadlessStoreTests.all),
+    ("HeadlessCLI", HeadlessCLITests.all),
     ("Ingest", IngestTests.all),
     ("Secret", SecretTests.all),
     ("PastebackCoordinator", PastebackCoordinatorTests.all),
@@ -55,4 +57,3 @@ for (suite, tests) in suites {
 
 print("\n\(passed) passed, \(failed) failed")
 if failed > 0 { exit(1) }
-

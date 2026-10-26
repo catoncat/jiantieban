@@ -17,6 +17,8 @@ enum SecretTests {
             TestCase("unnamed secret shows its mask, never the engine default name", testDisplayTitle),
             TestCase("undo mark when the plaintext was copied again merges into one plain row", testUndoMarkMergesExistingPlaintext),
             TestCase("value larger than the pipe buffer resolves instead of hanging", testLargeValueDoesNotDeadlock),
+            TestCase("mark as secret rejects an ID reused while jt runs", testMarkRejectsReusedID),
+            TestCase("secret mutations reject stale snapshots without changing replacement rows", testStaleSecretMutations),
         ]
     }
 
@@ -147,6 +149,62 @@ enum SecretTests {
     }
 
     // MARK: - Helpers
+
+    @MainActor
+    static func testMarkRejectsReusedID() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jtb-secret-race-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("history.db")
+        let store = try ClipStore(path: path.path)
+        let original = try store.upsertText("original synthetic value", at: Date(timeIntervalSince1970: 1)).item
+        let helper = directory.appendingPathComponent("jt")
+        // The fake engine deterministically emulates another CLI process replacing
+        // the current maximum ID during jt.add. It never opens the real vault.
+        let script = """
+        #!/bin/sh
+        set -eu
+        [ "$1" = add ] || exit 2
+        cat >/dev/null
+        /usr/bin/sqlite3 '\(path.path)' "DELETE FROM items; INSERT INTO items(kind, content, last_copied_at, created_at) VALUES ('text', 'replacement synthetic value', 2, 2);"
+        printf 'jt://secret/synthetic-race-reference\\n'
+        """
+        try script.write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let previous = ProcessInfo.processInfo.environment["JT_BIN"]
+        setenv("JT_BIN", helper.path, 1)
+        let manager = SecretManager(store: store)
+        if let previous { setenv("JT_BIN", previous, 1) } else { unsetenv("JT_BIN") }
+        do {
+            _ = try manager.markAsSecret(id: original.id, name: "test/race")
+            throw TestFailure("a reused ID must not be overwritten with the old value's reference")
+        } catch StoreError.itemChanged {}
+        let replacement = try unwrap(try store.item(id: original.id))
+        try expectEqual(replacement.content, "replacement synthetic value")
+        try expect(!replacement.isSecret && replacement.secretToken == nil)
+    }
+
+    @MainActor
+    static func testStaleSecretMutations() throws {
+        let store = try ClipStore()
+        let original = try store.upsertText("first", at: Date(timeIntervalSince1970: 1)).item
+        let marked = try store.markAsSecret(id: original.id, encryptedContent: "jt://secret/first",
+            token: "jt://secret/first", type: nil, name: "test/first", maskedPreview: "fi****st")
+        _ = try store.delete(id: marked.id)
+        let next = try store.upsertText("next", at: Date(timeIntervalSince1970: 2)).item
+        try expectEqual(next.id, marked.id, "fixture must exercise SQLite maximum-ID reuse")
+        let replacement = try store.markAsSecret(id: next.id, encryptedContent: "jt://secret/next",
+            token: "jt://secret/next", type: nil, name: "test/next", maskedPreview: "ne****xt")
+        do {
+            _ = try store.unmarkSecret(id: marked.id, plaintextContent: "first", expectedItem: marked)
+            throw TestFailure("stale undo must not write old plaintext over a new reference")
+        } catch StoreError.itemChanged {}
+        do {
+            _ = try store.setSecretName(id: marked.id, name: "wrong name", expectedItem: marked)
+            throw TestFailure("stale rename must not change a new reference")
+        } catch StoreError.itemChanged {}
+        try expectEqual(try store.item(id: next.id), replacement)
+    }
 
 
     /// 回归：取消标记（现为撤销标记）曾把 `jt://secret/…` 引用串写回当明文，且先 rm 再无法取回真值（真值丢失）。

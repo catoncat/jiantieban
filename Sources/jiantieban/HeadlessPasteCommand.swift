@@ -87,7 +87,7 @@ enum HeadlessPasteCommand {
             // Event delivery cannot prove that another app accepted the paste. A retention
             // failure after dispatch must never become a retryable paste failure.
             var retained = true
-            do { try store.markPasted(id: item.id) } catch { retained = false }
+            do { try store.markPasted(id: item.id, expectedItem: item) } catch { retained = false }
             output(["ok": true, "status": "event_sent", "id": item.id,
                     "format": actualFormat(content), "retained": retained,
                     "clipboard_changed": true], to: .standardOutput)

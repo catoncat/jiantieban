@@ -1,4 +1,8 @@
-# Headless paste — first CLI increment
+# Headless paste — compatible paste contract
+
+For the broader flat CLI, `get` / `copy` / `config` / `doctor`, and migration notes, see
+[HEADLESS-CLI.md](HEADLESS-CLI.md). This page documents the original `paste` response
+contract, which remains distinct from the generic JSON envelope.
 
 `paste` is a program/script-facing command, not a shortcut API. It does not create a
 panel, select a UI row, register keys, activate an application, or prompt for permission.
@@ -27,7 +31,10 @@ or `watch` process.
 ## Format and settings
 
 The CLI and app use the `rs.jiantieban` preferences domain and the same history directory
-(`JIANTIEBAN_HOME` overrides data only, not preferences).
+(`JIANTIEBAN_HOME` overrides data only, not preferences). A deliberately configured
+`JIANTIEBAN_PREFERENCES_SUITE` selects a different preferences domain. Shared storage
+does not imply live settings synchronization: restart already running processes after
+CLI configuration changes.
 
 | Record | `default` (omitted) | `plain` | `original` |
 | --- | --- | --- | --- |
@@ -46,7 +53,8 @@ in `jt`; formatting is not permission to expose secret values.
 
 Success: one JSON object on stdout, exit 0. Failure: one JSON object on stderr, nonzero
 exit; no clipboard text is included in either output. Exit 2 means invalid arguments;
-exit 1 means runtime failure. Other existing CLI commands retain their previous output.
+exit 1 means runtime failure. Other existing CLI commands retain their previous output unless `--json` is selected;
+new commands have their documented defaults. `clear` now requires `--yes`.
 
 ```json
 {"ok":true,"status":"event_sent","id":42,"format":"plain","retained":true,"clipboard_changed":true}
@@ -80,7 +88,10 @@ SQLite uses a bounded busy timeout for ordinary app/CLI overlap.
 `make test` includes parser, selection, format policy and injected lifecycle failure
 cases. `make bundle && python3 Scripts/test-headless-cli.py` verifies actual process
 exit and JSON failures without posting events or changing Accessibility grants.
-The macOS workflow runs both; it does not sign or claim interactive acceptance.
+For the broader CLI redesign, use the manual Codex-on-an-authorized-Mac commands in
+[HEADLESS-CLI.md](HEADLESS-CLI.md); do not add or rely on CI. The redesign has not yet
+been compiled on Mac. The first increment's historical 153-test/CI result applies only
+to that earlier commit, not to the current changes, signing, or interactive acceptance.
 
 Before publishing a release, complete the headless section of [ACCEPTANCE.md](ACCEPTANCE.md)
 on an authorized Mac, plus the existing [distribution gates](DISTRIBUTION.md).
