@@ -247,6 +247,13 @@ public final class ClipStore {
         try fetchItem(id: id)
     }
 
+    /// Latest persisted copy, independent of presentation state or favorites.
+    /// An id tie-break makes equal timestamps deterministic across callers.
+    public func latestItem() throws -> ClipItem? {
+        let stmt = try db.prepare("SELECT \(Self.itemColumns) FROM items ORDER BY last_copied_at DESC, id DESC LIMIT 1")
+        return try stmt.step() ? rowToItem(stmt) : nil
+    }
+
     // MARK: - 写入（去重：重复 → 刷新时间并顶到最前）
 
     /// 插入/去重一条普通文本记录。普通历史始终以明文存储；密钥化由 SecretManager 负责。
@@ -757,3 +764,4 @@ public final class ClipStore {
         return SearchPage(items: items, total: total, page: max(1, page), pageSize: pageSize)
     }
 }
+
